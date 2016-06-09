@@ -5,7 +5,7 @@ Build-Depends: debhelper, dh-systemd, quilt, libncurses5-dev, libxml2-dev, wget,
     libjansson-dev, libssl-dev, libsrtp0-dev, uuid-dev, libsqlite3-dev, subversion,
     libopus-dev, pkg-config, build-essential, git, libmyodbc,
     odbcinst, unixodbc-dev, autoconf, libspeex-dev, libspeexdsp-dev, libgsm0710-dev,
-    libgsm1-dev, portaudio19-dev, python-dev
+    libgsm1-dev, portaudio19-dev, python-dev, libspandsp-dev, libtiff5-dev
 Standards-Version: 3.9.6
 Maintainer: Irontec OASIS Team <oasis@irontec.com>
 
