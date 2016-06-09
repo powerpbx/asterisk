@@ -1,0 +1,14 @@
+Index: res/res_pjsip.c
+===================================================================
+--- a/res/res_pjsip.c	(revisión: 434725)
++++ b/res/res_pjsip.c	(copia de trabajo)
+@@ -2106,6 +2112,9 @@
+ 		type = pjsip_transport_get_type_from_name(&sip_uri->transport_param);
+ 	}
+ 
++    // Inc. 48708 (force UDP transport in Contact header)
++    type = PJSIP_TRANSPORT_UDP;
++
+ 	if (type == PJSIP_TRANSPORT_UNSPECIFIED) {
+ 		return -1;
+ 	}

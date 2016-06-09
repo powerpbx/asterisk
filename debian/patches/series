@@ -1,0 +1,10 @@
+0000000_asterisk_oasis_version.patch
+0044627_fake_ringing_fix.patch
+0045696_sorcery_id.patch
+0045729_opus_codec_compatibility.patch
+0047498_add_pjsip_subscribecontext.patch
+0048708_force_udp_transport_contact.patch
+0046109_improve_logging.patch
+0061064_endpoint_rtcache_improved.patch
+0060929_pjsip_t38_initial_invite.patch
+0061456_disable_moh_warning.patch

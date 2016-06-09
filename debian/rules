@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+
+override_dh_auto_configure: 
+	contrib/scripts/get_mp3_source.sh || true
+	dh_auto_configure -- --libdir=/usr/lib --with-pjproject-bundled
+
+override_dh_auto_build:
+	${MAKE} menuselect.makeopts
+	menuselect/menuselect --enable app_syslog menuselect.makeopts
+	menuselect/menuselect --enable format_mp3 menuselect.makeopts
+#	menuselect/menuselect --enable DONT_OPTIMIZE menuselect.makeopts
+#	menuselect/menuselect --enable DEBUG_THREADS menuselect.makeopts
+	menuselect/menuselect --disable CORE-SOUNDS-EN-GSM menuselect.makeopts
+	menuselect/menuselect --enable CORE-SOUNDS-EN-G729 menuselect.makeopts
+	menuselect/menuselect --enable CORE-SOUNDS-ES-G729 menuselect.makeopts
+	menuselect/menuselect --enable CORE-SOUNDS-EN-ALAW menuselect.makeopts
+	menuselect/menuselect --enable CORE-SOUNDS-ES-ALAW menuselect.makeopts
+	dh_auto_build
+
+# Install systemd unit files
+override_dh_systemd_enable:
+	dh_systemd_enable --name=asterisk
+
+override_dh_systemd_start:
+	dh_systemd_start --restart-after-upgrade --name=asterisk
+
+%:
+	dh $@ --with quilt --with systemd

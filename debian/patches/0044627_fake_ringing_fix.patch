@@ -1,0 +1,16 @@
+Index: channels/chan_pjsip.c
+===================================================================
+--- a/channels/chan_pjsip.c	(revisión: 431537)
++++ b/channels/chan_pjsip.c	(copia de trabajo)
+@@ -1064,9 +1064,9 @@
+ 		}
+ 
+ 		if (ast_channel_state(session->channel) == AST_STATE_RING) {
++			return 0;
++		} else if (ast_channel_state(session->channel) == AST_STATE_RINGING) {
+ 			response_code = !session->endpoint->inband_progress ? 180 : 183;
+-		} else if (ast_channel_state(session->channel) == AST_STATE_RINGING) {
+-			response_code = 183;
+ 		}
+ 
+ 		if (response_code) {

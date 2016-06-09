@@ -1,0 +1,43 @@
+diff --git a/res/res_musiconhold.c b/res/res_musiconhold.c
+index 669fb9b..5bf0ca6 100644
+--- a/res/res_musiconhold.c
++++ b/res/res_musiconhold.c
+@@ -1356,6 +1356,7 @@ static int local_ast_moh_start(struct ast_channel *chan, const char *mclass, con
+ 	struct ast_variable *var = NULL;
+ 	int res = 0;
+ 	int realtime_possible = ast_check_realtime("musiconhold");
++        int warn = (realtime_possible) ? 0 : 1;
+ 
+ 	/* The following is the order of preference for which class to use:
+ 	 * 1) The channels explicitly set musicclass, which should *only* be
+@@ -1369,26 +1370,26 @@ static int local_ast_moh_start(struct ast_channel *chan, const char *mclass, con
+ 	 * 4) The default class.
+ 	 */
+ 	if (!ast_strlen_zero(ast_channel_musicclass(chan))) {
+-		mohclass = get_mohbyname(ast_channel_musicclass(chan), 1, 0);
++		mohclass = get_mohbyname(ast_channel_musicclass(chan), warn, 0);
+ 		if (!mohclass && realtime_possible) {
+ 			var = ast_load_realtime("musiconhold", "name", ast_channel_musicclass(chan), SENTINEL);
+ 		}
+ 	}
+ 	if (!mohclass && !var && !ast_strlen_zero(mclass)) {
+-		mohclass = get_mohbyname(mclass, 1, 0);
++		mohclass = get_mohbyname(mclass, warn, 0);
+ 		if (!mohclass && realtime_possible) {
+ 			var = ast_load_realtime("musiconhold", "name", mclass, SENTINEL);
+ 		}
+ 	}
+ 	if (!mohclass && !var && !ast_strlen_zero(interpclass)) {
+-		mohclass = get_mohbyname(interpclass, 1, 0);
++		mohclass = get_mohbyname(interpclass, warn, 0);
+ 		if (!mohclass && realtime_possible) {
+ 			var = ast_load_realtime("musiconhold", "name", interpclass, SENTINEL);
+ 		}
+ 	}
+ 
+ 	if (!mohclass && !var) {
+-		mohclass = get_mohbyname("default", 1, 0);
++		mohclass = get_mohbyname("default", warn, 0);
+ 		if (!mohclass && realtime_possible) {
+ 			var = ast_load_realtime("musiconhold", "name", "default", SENTINEL);
+ 		}
