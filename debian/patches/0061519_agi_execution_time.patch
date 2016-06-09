@@ -1,0 +1,31 @@
+--- a/res/res_agi.c
++++ b/res/res_agi.c
+@@ -3773,6 +3807,7 @@ static enum agi_result run_agi(struct ast_channel *chan, char *request, AGI *agi
+ 	const char *exit_on_hangup_str;
+ 	int exit_on_hangup;
+ 	struct deferred_frames deferred_frames;
++	struct timeval tvBegin, tvEnd;
+ 
+ 	AST_LIST_HEAD_INIT_NOLOCK(&deferred_frames);
+ 
+@@ -3793,6 +3828,7 @@ static enum agi_result run_agi(struct ast_channel *chan, char *request, AGI *agi
+ 
+ 	setlinebuf(readf);
+ 	setup_env(chan, request, agi->fd, (agi->audio > -1), argc, argv);
++	gettimeofday(&tvBegin, NULL); // Grab starting time
+ 	for (;;) {
+ 		if (needhup) {
+ 			needhup = 0;
+@@ -3876,8 +3912,11 @@ static enum agi_result run_agi(struct ast_channel *chan, char *request, AGI *agi
+ 			}
+ 
+ 			if (!buf[0]) {
++				/* Calculate the differce in milliseconds */
++				gettimeofday(&tvEnd, NULL); // Grab ending time
++				long int diff = ((tvEnd.tv_usec + 1000000 * tvEnd.tv_sec) - (tvBegin.tv_usec + 1000000 * tvBegin.tv_sec)) / 1000;
+ 				/* Program terminated */
+-				ast_verb(3, "<%s>AGI Script %s completed, returning %d\n", ast_channel_name(chan), request, returnstatus);
++				ast_verb(3, "<%s>AGI Script %s completed, returning %d (took %ld ms)\n", ast_channel_name(chan), request, returnstatus, diff);
+ 				if (pid > 0)
+ 					waitpid(pid, status, 0);
+ 				/* No need to kill the pid anymore, since they closed us */
