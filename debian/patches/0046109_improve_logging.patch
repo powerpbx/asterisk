@@ -1,8 +1,8 @@
 diff --git a/main/pbx.c b/main/pbx.c
-index b166978..6f3de46 100644
+index 6b0069c..9caa076 100644
 --- a/main/pbx.c
 +++ b/main/pbx.c
-@@ -2824,12 +2824,21 @@ static int pbx_extension_helper(struct ast_channel *c, struct ast_context *con,
+@@ -2824,12 +2824,22 @@ static int pbx_extension_helper(struct ast_channel *c, struct ast_context *con,
  			}
  			ast_debug(1, "Launching '%s'\n", app_name(app));
  			if (VERBOSITY_ATLEAST(3)) {
@@ -12,16 +12,17 @@ index b166978..6f3de46 100644
 -					COLORIZE(COLOR_BRMAGENTA, 0, ast_channel_name(c)),
 -					COLORIZE(COLOR_BRMAGENTA, 0, passdata),
 -					"in new stack");
++				const char *hashid = pbx_builtin_getvar_helper(c, "CID_HASH");
 +                if (strcasecmp(app_name(app), "verbose") == 0 || strcasecmp(app_name(app), "log") == 0 || strcasecmp(app_name(app), "noop") == 0) {
-+                    ast_verb(4, "Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
-+                        exten, context, priority,
++                    ast_verb(4, "[%s] Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
++                        hashid, exten, context, priority,
 +                        COLORIZE(COLOR_BRBLUE, 0, app_name(app)),
 +                        COLORIZE(COLOR_BRBLUE, 0, ast_channel_name(c)),
 +                        COLORIZE(COLOR_BRBLUE, 0, passdata),
 +                        "in new stack");
 +                } else {
-+                    ast_verb(4, "Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
-+                        exten, context, priority,
++                    ast_verb(4, "[%s] Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
++                        hashid, exten, context, priority,
 +                        COLORIZE(COLOR_BRCYAN, 0, app_name(app)),
 +                        COLORIZE(COLOR_BRMAGENTA, 0, ast_channel_name(c)),
 +                        COLORIZE(COLOR_BRMAGENTA, 0, passdata),
@@ -31,7 +32,7 @@ index b166978..6f3de46 100644
  			return pbx_exec(c, app, passdata);	/* 0 on success, -1 on failure */
  		}
 diff --git a/res/res_agi.c b/res/res_agi.c
-index ff33580..803b8db 100644
+index e3839dd..1e67b98 100644
 --- a/res/res_agi.c
 +++ b/res/res_agi.c
 @@ -723,6 +723,20 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
@@ -55,24 +56,26 @@ index ff33580..803b8db 100644
  	<agi name="wait for digit" language="en_US">
  		<synopsis>
  			Waits for a digit to be pressed.
-@@ -2829,8 +2843,10 @@ static int handle_channelstatus(struct ast_channel *chan, AGI *agi, int argc, co
+@@ -2829,8 +2843,11 @@ static int handle_channelstatus(struct ast_channel *chan, AGI *agi, int argc, co
  
  static int handle_setvariable(struct ast_channel *chan, AGI *agi, int argc, const char * const argv[])
  {
 -	if (argv[3])
 +	if (argv[3]) {
  		pbx_builtin_setvar_helper(chan, argv[2], argv[3]);
-+		ast_verb(3, "AGI [%s:%s] \e[0;36mAGI SetVar\e[0;37m(\"\e[0;35m%s\e[0;37m\", \"\e[0;35m%s = %s\e[0;37m\")\e[0m\n", argv[4], argv[5], ast_channel_name(chan), argv[2], argv[3]);
++		const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
++		ast_verb(4, "[%s] [%-25s] \e[0;36mAGI SetVar\e[0;37m(\"\e[0;35m%s\e[0;37m\", \"\e[0;35m%s = %s\e[0;37m\")\e[0m\n", hashid, argv[4], ast_channel_name(chan), argv[2], argv[3]);
 +	}
  
  	ast_agi_send(agi->fd, chan, "200 result=1\n");
  	return RESULT_SUCCESS;
-@@ -2903,7 +2919,24 @@ static int handle_verbose(struct ast_channel *chan, AGI *agi, int argc, const ch
+@@ -2903,7 +2920,26 @@ static int handle_verbose(struct ast_channel *chan, AGI *agi, int argc, const ch
  	if (argv[2])
  		sscanf(argv[2], "%30d", &level);
  
 -	ast_verb(level, "%s: %s\n", ast_channel_data(chan), argv[1]);
-+	ast_verb(level, "AGI [%s:%s] \e[0;34mAGI Verbose\e[0;37m(\"\e[0;34m%s\e[0;37m\", \"\e[0;34m%s\e[0;37m\")\e[0m\n", argv[3], argv[4], ast_channel_name(chan), argv[1]);
++	const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
++	ast_verb(level, "[%s] [%-25s] \e[0;34mAGI Verbos\e[0;37m(\"\e[0;34m%s\e[0;37m\", \"\e[0;34m%s\e[0;37m\")\e[0m\n", hashid, argv[3], ast_channel_name(chan), argv[1]);
 +
 +	ast_agi_send(agi->fd, chan, "200 result=1\n");
 +
@@ -89,11 +92,12 @@ index ff33580..803b8db 100644
 +	if (argv[2])
 +		sscanf(argv[2], "%30d", &level);
 +
-+	ast_verb(level, "AGI [%s:%s] \e[0;31mAGI Error\e[0;37m(\"\e[0;31m%s\e[0;37m\", \"\e[0;31m%s\e[0;37m\")\e[0m\n", argv[3], argv[4], ast_channel_name(chan), argv[1]);
++	const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
++	ast_verb(level, "[%s] [%-25s] \e[0;31mAGI Error \e[0;37m(\"\e[0;31m%s\e[0;37m\", \"\e[0;31m%s\e[0;37m\")\e[0m\n", hashid, argv[3], ast_channel_name(chan), argv[1]);
  
  	ast_agi_send(agi->fd, chan, "200 result=1\n");
  
-@@ -3364,6 +3397,7 @@ static struct agi_command commands[] = {
+@@ -3364,6 +3400,7 @@ static struct agi_command commands[] = {
  	{ { "control", "stream", "file", NULL }, handle_controlstreamfile, NULL, NULL, 0 },
  	{ { "tdd", "mode", NULL }, handle_tddmode, NULL, NULL, 0 },
  	{ { "verbose", NULL }, handle_verbose, NULL, NULL, 1 },
