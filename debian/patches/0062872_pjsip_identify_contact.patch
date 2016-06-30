@@ -1,0 +1,141 @@
+diff --git a/include/asterisk/res_pjsip.h b/include/asterisk/res_pjsip.h
+index 3a9d61e..112522f 100644
+--- a/include/asterisk/res_pjsip.h
++++ b/include/asterisk/res_pjsip.h
+@@ -389,6 +389,8 @@ AST_VECTOR(ast_sip_auth_vector, const char *);
+ enum ast_sip_endpoint_identifier_type {
+ 	/*! Identify based on user name in From header */
+ 	AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME = (1 << 0),
++    /*! Identify based on user name and domain agains AOR contact */
++    AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT = (1 << 1),
+ };
+ 
+ enum ast_sip_session_refresh_method {
+diff --git a/res/res_pjsip/pjsip_configuration.c b/res/res_pjsip/pjsip_configuration.c
+index 0658833..00cce4a 100644
+--- a/res/res_pjsip/pjsip_configuration.c
++++ b/res/res_pjsip/pjsip_configuration.c
+@@ -487,6 +487,8 @@ static int ident_handler(const struct aco_option *opt, struct ast_variable *var,
+ 
+ 		if (!strcasecmp(val, "username")) {
+ 			endpoint->ident_method |= AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME;
++        } else if (!strcasecmp(val, "contact")) {
++            endpoint->ident_method |= AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT;
+ 		} else {
+ 			ast_log(LOG_ERROR, "Unrecognized identification method %s specified for endpoint %s\n",
+ 					val, ast_sorcery_object_get_id(endpoint));
+@@ -502,6 +504,8 @@ static int ident_to_str(const void *obj, const intptr_t *args, char **buf)
+ 	switch (endpoint->ident_method) {
+ 	case AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME :
+ 		*buf = "username"; break;
++    case AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT :
++        *buf = "contact"; break;
+ 	default:
+ 		return 0;
+ 	}
+diff --git a/res/res_pjsip_endpoint_identifier_contact.c b/res/res_pjsip_endpoint_identifier_contact.c
+new file mode 100644
+index 0000000..5c9b305
+--- /dev/null
++++ b/res/res_pjsip_endpoint_identifier_contact.c
+@@ -0,0 +1,100 @@
++/*
++ * Asterisk -- An open source telephony toolkit.
++ *
++ * Copyright (C) 2013, Digium, Inc.
++ *
++ * Mark Michelson <mmichelson@digium.com>
++ * Ivan Alonso <kaian@irontec.com>
++ *
++ * See http://www.asterisk.org for more information about
++ * the Asterisk project. Please do not directly contact
++ * any of the maintainers of this project for assistance;
++ * the project provides a web site, mailing lists and IRC
++ * channels for your use.
++ *
++ * This program is free software, distributed under the terms of
++ * the GNU General Public License Version 2. See the LICENSE file
++ * at the top of the source tree.
++ */
++
++/*** MODULEINFO
++	<depend>pjproject</depend>
++	<depend>res_pjsip</depend>
++	<support_level>core</support_level>
++ ***/
++
++#include "asterisk.h"
++
++#include <pjsip.h>
++
++#include "asterisk/res_pjsip.h"
++#include "asterisk/module.h"
++
++static int get_endpoint_details(pjsip_rx_data *rdata, char *endpoint, size_t endpoint_size, char *domain, size_t domain_size)
++{
++	pjsip_uri *from = rdata->msg_info.from->uri;
++	pjsip_sip_uri *sip_from;
++	if (!PJSIP_URI_SCHEME_IS_SIP(from) && !PJSIP_URI_SCHEME_IS_SIPS(from)) {
++		return -1;
++	}
++	sip_from = (pjsip_sip_uri *) pjsip_uri_get_uri(from);
++	ast_copy_pj_str(endpoint, &sip_from->user, endpoint_size);
++	ast_copy_pj_str(domain, &sip_from->host, domain_size);
++	return 0;
++}
++
++static struct ast_sip_endpoint *contact_identify(pjsip_rx_data *rdata)
++{
++	char endpoint_name[256], domain_name[256];
++    char contact[400];
++    struct ast_sip_aor *aor;
++    struct ao2_iterator iter;
++
++    /* user and domain from From header */
++	if (get_endpoint_details(rdata, endpoint_name, sizeof(endpoint_name), domain_name, sizeof(domain_name))) {
++		return NULL;
++	}
++
++    /* Create match expression by field contact of aor*/
++    snprintf(contact, sizeof(contact), "sip:%s@%s", endpoint_name, domain_name);
++    struct ast_variable *var = ast_variable_new("contact =", contact, "");
++    if (!var) return NULL;
++
++    /* Get first matching aor */
++    struct ao2_container *aors;
++    aors = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(), "aor", AST_RETRIEVE_FLAG_MULTIPLE, var);
++    if (aors && ao2_container_count(aors)) {
++        iter = ao2_iterator_init(aors, 0);
++        if ((aor = ao2_iterator_next(&iter))) {
++            /* Get endpoint matching current aor */
++            return ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(), "endpoint", ast_sorcery_object_get_id(aor));
++        }
++    }
++
++    return NULL;
++}
++
++static struct ast_sip_endpoint_identifier contact_identifier = {
++	.identify_endpoint = contact_identify,
++};
++
++static int load_module(void)
++{
++	CHECK_PJSIP_MODULE_LOADED();
++
++	ast_sip_register_endpoint_identifier_with_name(&contact_identifier, "contact");
++	return AST_MODULE_LOAD_SUCCESS;
++}
++
++static int unload_module(void)
++{
++	ast_sip_unregister_endpoint_identifier(&contact_identifier);
++	return 0;
++}
++
++AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP contact endpoint identifier",
++		.support_level = AST_MODULE_SUPPORT_CORE,
++		.load = load_module,
++		.unload = unload_module,
++		.load_pri = AST_MODPRI_APP_DEPEND,
++	       );
