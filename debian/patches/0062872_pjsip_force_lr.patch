@@ -1,8 +1,8 @@
 diff --git a/include/asterisk/res_pjsip.h b/include/asterisk/res_pjsip.h
-index 3a9d61e..461a3be 100644
+index 68c6b71..df47f84 100644
 --- a/include/asterisk/res_pjsip.h
 +++ b/include/asterisk/res_pjsip.h
-@@ -1750,6 +1754,13 @@ struct ao2_container *ast_sip_get_endpoints(void);
+@@ -2013,6 +2013,13 @@ struct ao2_container *ast_sip_get_endpoints(void);
   */
  struct ast_sip_endpoint *ast_sip_default_outbound_endpoint(void);
  
@@ -17,10 +17,10 @@ index 3a9d61e..461a3be 100644
   * \brief Retrieve relevant SIP auth structures from sorcery
   *
 diff --git a/res/res_pjsip.c b/res/res_pjsip.c
-index cc86f90..c0ecd9b 100644
+index bbaf778..74e16fe 100644
 --- a/res/res_pjsip.c
 +++ b/res/res_pjsip.c
-@@ -1305,6 +1308,9 @@
+@@ -1431,6 +1431,9 @@
                                          <synopsis>When set, Asterisk will dynamically create and destroy a NoOp priority 1 extension for a given
  					peer who registers or unregisters with us.</synopsis>
                                  </configOption>
@@ -30,7 +30,7 @@ index cc86f90..c0ecd9b 100644
  				<configOption name="default_outbound_endpoint" default="default_outbound_endpoint">
  					<synopsis>Endpoint to use when sending an outbound request to a URI without a specified endpoint.</synopsis>
  				</configOption>
-@@ -2680,6 +2689,11 @@ pjsip_dialog *ast_sip_create_dialog_uac(const struct ast_sip_endpoint *endpoint,
+@@ -2834,6 +2837,11 @@ pjsip_dialog *ast_sip_create_dialog_uac(const struct ast_sip_endpoint *endpoint,
  		pj_list_init(&route_set);
  
  		pj_strdup2_with_null(dlg->pool, &tmp, outbound_proxy);
@@ -43,28 +43,28 @@ index cc86f90..c0ecd9b 100644
  			ast_log(LOG_ERROR, "Could not create dialog to endpoint '%s' as outbound proxy URI '%s' is not valid\n",
  				ast_sorcery_object_get_id(endpoint), outbound_proxy);
 diff --git a/res/res_pjsip/config_global.c b/res/res_pjsip/config_global.c
-index 8348a1e..58a40b1 100644
+index 6bb6888..4b2a1a9 100644
 --- a/res/res_pjsip/config_global.c
 +++ b/res/res_pjsip/config_global.c
-@@ -38,6 +38,7 @@
- #define DEFAULT_REGCONTEXT ""
- #define DEFAULT_CONTACT_EXPIRATION_CHECK_INTERVAL 30
- #define DEFAULT_VOICEMAIL_EXTENSION ""
+@@ -43,6 +43,7 @@
+ #define DEFAULT_UNIDENTIFIED_REQUEST_COUNT 5
+ #define DEFAULT_UNIDENTIFIED_REQUEST_PERIOD 5
+ #define DEFAULT_UNIDENTIFIED_REQUEST_PRUNE_INTERVAL 30
 +#define DEFAULT_FORCE_LR "no"
  
  static char default_useragent[256];
  
-@@ -64,6 +65,8 @@ struct global_config {
+@@ -71,6 +72,8 @@ struct global_config {
  	unsigned int max_initial_qualify_time;
  	/* The interval at which to check for expired contacts */
  	unsigned int contact_expiration_check_interval;
 +    /* Append ;lr to outbound proxy requests */
 +    unsigned int force_lr;
- };
- 
- static void global_destructor(void *obj)
-@@ -237,6 +240,18 @@ unsigned int ast_sip_get_max_initial_qualify_time(void)
- 	return time;
+ 	/*! Nonzero to disable multi domain support */
+ 	unsigned int disable_multi_domain;
+ 	/* The maximum number of unidentified requests per source IP address before a security event is logged */
+@@ -301,6 +304,18 @@ void ast_sip_get_default_realm(char *realm, size_t size)
+ 	}
  }
  
 +unsigned int ast_sip_force_lr(void)
@@ -82,12 +82,12 @@ index 8348a1e..58a40b1 100644
  void ast_sip_get_default_from_user(char *from_user, size_t size)
  {
  	struct global_config *cfg;
-@@ -373,6 +388,8 @@ int ast_sip_initialize_sorcery_global(void)
+@@ -437,6 +452,8 @@ int ast_sip_initialize_sorcery_global(void)
  	ast_sorcery_object_field_register(sorcery, "global", "contact_expiration_check_interval",
  		__stringify(DEFAULT_CONTACT_EXPIRATION_CHECK_INTERVAL),
  		OPT_UINT_T, 0, FLDSET(struct global_config, contact_expiration_check_interval));
-+	ast_sorcery_object_field_register(sorcery, "global", "force_lr", DEFAULT_FORCE_LR,
-+		OPT_BOOL_T, 1, FLDSET(struct global_config, force_lr));
- 
- 	if (ast_sorcery_instance_observer_add(sorcery, &observer_callbacks_global)) {
- 		return -1;
++    ast_sorcery_object_field_register(sorcery, "global", "force_lr", DEFAULT_FORCE_LR,
++        OPT_BOOL_T, 1, FLDSET(struct global_config, force_lr));
+ 	ast_sorcery_object_field_register(sorcery, "global", "disable_multi_domain", "no",
+ 		OPT_BOOL_T, 1, FLDSET(struct global_config, disable_multi_domain));
+ 	ast_sorcery_object_field_register(sorcery, "global", "unidentified_request_count",
