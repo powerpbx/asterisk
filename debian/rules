@@ -8,10 +8,10 @@ override_dh_auto_build:
 	${MAKE} menuselect.makeopts
 	menuselect/menuselect --enable format_mp3 menuselect.makeopts
 	menuselect/menuselect --disable CORE-SOUNDS-EN-GSM menuselect.makeopts
-	menuselect/menuselect --enable CORE-SOUNDS-EN-G729 menuselect.makeopts
-	menuselect/menuselect --enable CORE-SOUNDS-ES-G729 menuselect.makeopts
-	menuselect/menuselect --enable CORE-SOUNDS-EN-ALAW menuselect.makeopts
-	menuselect/menuselect --enable CORE-SOUNDS-ES-ALAW menuselect.makeopts
+	menuselect/menuselect --disable CORE-SOUNDS-EN-G729 menuselect.makeopts
+	menuselect/menuselect --disable CORE-SOUNDS-ES-G729 menuselect.makeopts
+	menuselect/menuselect --disable CORE-SOUNDS-EN-ALAW menuselect.makeopts
+	menuselect/menuselect --disable CORE-SOUNDS-ES-ALAW menuselect.makeopts
 	dh_auto_build
 
 # Install systemd unit files
