@@ -10,7 +10,7 @@ Standards-Version: 3.9.6
 Maintainer: Irontec OASIS Team <oasis@irontec.com>
 
 Package: ivozprovider-asterisk
-Architecture: amd64
+Architecture: any
 Section: comm
 Priority: optional
 Pre-Depends: ${misc:Pre-Depends}
