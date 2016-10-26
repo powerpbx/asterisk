@@ -123,7 +123,7 @@ index 4c70682..b52a997 100644
  		if (!strcasecmp(val, "username")) {
  			method = AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME;
 +        } else if (!strcasecmp(val, "contact")) {
-+            method |= AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT;
++            method = AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT;
  		} else	if (!strcasecmp(val, "auth_username")) {
  			method = AST_SIP_ENDPOINT_IDENTIFY_BY_AUTH_USERNAME;
  		} else {
