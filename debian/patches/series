@@ -9,7 +9,6 @@
 0061519_agi_execution_time.patch
 0062162_confbdirge_entering_count.patch
 0062268_unique_hashid.patch
-0062872_pjsip_force_lr.patch
 0062872_pjsip_identify_contact.patch
 0063323_log_tag_from_sip_header.patch
 0065167_pjsip_early_replaces.patch
