@@ -1,0 +1,110 @@
+diff --git channels/chan_pjsip.c channels/chan_pjsip.c
+index 970fef4..3746ef9 100644
+--- a/channels/chan_pjsip.c
++++ b/channels/chan_pjsip.c
+@@ -219,9 +219,7 @@ static enum ast_rtp_glue_result chan_pjsip_get_vrtp_peer(struct ast_channel *cha
+ /*! \brief Function called by RTP engine to get peer capabilities */
+ static void chan_pjsip_get_codec(struct ast_channel *chan, struct ast_format_cap *result)
+ {
+-	struct ast_sip_channel_pvt *channel = ast_channel_tech_pvt(chan);
+-
+-	ast_format_cap_append_from_cap(result, channel->session->endpoint->media.codecs, AST_MEDIA_TYPE_UNKNOWN);
++	ast_format_cap_append_from_cap(result, ast_channel_nativeformats(chan), AST_MEDIA_TYPE_UNKNOWN);
+ }
+ 
+ /*! \brief Destructor function for \ref transport_info_data */
+@@ -697,15 +695,30 @@ static struct ast_frame *chan_pjsip_read(struct ast_channel *ast)
+ 		return f;
+ 	}
+ 
+-	if (ast_format_cap_iscompatible_format(channel->session->endpoint->media.codecs, f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
+-		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when endpoint '%s' is not configured for it\n",
+-			ast_format_get_name(f->subclass.format), ast_channel_name(ast),
+-			ast_sorcery_object_get_id(channel->session->endpoint));
++	if (ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
++		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when it has not been negotiated\n",
++			ast_format_get_name(f->subclass.format), ast_channel_name(ast));
+ 
+ 		ast_frfree(f);
+ 		return &ast_null_frame;
+ 	}
+ 
++	if (!channel->session->endpoint->asymmetric_rtp_codec &&
++		ast_format_cmp(ast_channel_rawwriteformat(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
++		/* For maximum compatibility we ensure that the write format matches that of the received media */
++		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when we're sending '%s', switching to match\n",
++			ast_format_get_name(f->subclass.format), ast_channel_name(ast),
++			ast_format_get_name(ast_channel_rawwriteformat(ast)));
++		ast_channel_set_rawwriteformat(ast, f->subclass.format);
++		ast_set_write_format(ast, ast_channel_writeformat(ast));
++		ast_format_cap_remove(ast_channel_nativeformats(ast), ast_channel_rawwriteformat(ast));
++
++		if (ast_channel_is_bridged(ast)) {
++			ast_channel_set_unbridged_nolock(ast, 1);
++		}
++	}
++
++
+ 	if (channel->session->dsp) {
+ 		f = ast_dsp_process(ast, channel->session->dsp, f);
+ 
+diff --git include/asterisk/res_pjsip.h include/asterisk/res_pjsip.h
+index 68c6b71..0fb90dc 100644
+--- a/include/asterisk/res_pjsip.h
++++ b/include/asterisk/res_pjsip.h
+@@ -745,6 +745,8 @@ struct ast_sip_endpoint {
+ 	struct ast_acl_list *acl;
+ 	/* Restrict what IPs are allowed in the Contact header (for registration) */
+ 	struct ast_acl_list *contact_acl;
++	/*! Do we allow an asymmetric RTP codec? */
++	unsigned int asymmetric_rtp_codec;
+ };
+ 
+ /*!
+diff --git res/res_pjsip.c res/res_pjsip.c
+index bbaf778..ac7ac1a 100644
+--- a/res/res_pjsip.c
++++ b/res/res_pjsip.c
+@@ -896,6 +896,14 @@
+ 						mask with a slash ('/')
+ 					</para></description>
+ 				</configOption>
++                                <configOption name="asymmetric_rtp_codec" default="no">
++                                        <synopsis>Allow the sending and receiving RTP codec to differ</synopsis>
++                                        <description><para>
++                                                When set to "yes" the codec in use for sending will be allowed to differ from
++                                                that of the received one. PJSIP will not automatically switch the sending one
++                                                to the receiving one.
++                                        </para></description>
++                                </configOption>
+ 			</configObject>
+ 			<configObject name="auth">
+ 				<synopsis>Authentication type</synopsis>
+diff --git res/res_pjsip/pjsip_configuration.c res/res_pjsip/pjsip_configuration.c
+index 4c70682..3ee5071 100644
+--- a/res/res_pjsip/pjsip_configuration.c
++++ b/res/res_pjsip/pjsip_configuration.c
+@@ -1858,6 +1858,7 @@ int ast_res_pjsip_initialize_configuration(const struct ast_module_info *ast_mod
+ 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_deny", "", endpoint_acl_handler, NULL, NULL, 0, 0);
+ 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_permit", "", endpoint_acl_handler, NULL, NULL, 0, 0);
+ 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_acl", "", endpoint_acl_handler, contact_acl_to_str, NULL, 0, 0);
++	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "asymmetric_rtp_codec", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, asymmetric_rtp_codec));
+ 
+ 	if (ast_sip_initialize_sorcery_transport()) {
+ 		ast_log(LOG_ERROR, "Failed to register SIP transport support with sorcery\n");
+diff --git res/res_pjsip_sdp_rtp.c res/res_pjsip_sdp_rtp.c
+index 029eb5d..7c900a8 100644
+--- a/res/res_pjsip_sdp_rtp.c
++++ b/res/res_pjsip_sdp_rtp.c
+@@ -373,6 +373,11 @@ static int set_caps(struct ast_sip_session *session, struct ast_sip_session_medi
+ 				session->dsp = NULL;
+ 			}
+ 		}
++
++		if (ast_channel_is_bridged(session->channel)) {
++			ast_channel_set_unbridged_nolock(session->channel, 1);
++		}
++
+ 		ast_channel_unlock(session->channel);
+ 	}
+ 
