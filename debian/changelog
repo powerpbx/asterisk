@@ -1,5 +1,11 @@
+ivozprovider-asterisk (1.1.0) UNRELEASED; urgency=medium
+
+  * Version bump to 1.1.0
+
+ -- Irontec IvozProvider Team <dev@lists-ivozprovider.irontec.com>  Thu, 05 Jan 2017 12:44:15 +0100
+
 ivozprovider-asterisk (1.0.0) UNRELEASED; urgency=medium
 
-  * Initial release. 
+  * Initial release.
 
- -- root <root@packages.irontec.com>  Mon, 14 Mar 2016 13:40:59 +0100
+ -- Irontec IvozProvider Team <dev@lists-ivozprovider.irontec.com>  Mon, 11 Apr 2016 13:40:59 +0100
