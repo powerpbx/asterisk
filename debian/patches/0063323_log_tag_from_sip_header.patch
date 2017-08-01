@@ -1,0 +1,42 @@
+diff --git a/channels/chan_pjsip.c b/channels/chan_pjsip.c
+index b9de893..a0ff107 100644
+--- a/channels/chan_pjsip.c
++++ b/channels/chan_pjsip.c
+@@ -183,6 +183,28 @@ static int chan_pjsip_get_cidhash(struct ast_channel *chan, pjsip_msg *msg)
+ 	return 0;
+ }
+ 
++static int chan_pjsip_get_logtag(struct ast_channel *chan, pjsip_msg *msg)
++{
++    pj_str_t hdrname = { .ptr = "X-Info-Logtag", .slen = 13 };
++
++    if (!chan || !msg)
++        return -1;
++
++    // Get X-Info-Log Header data
++    pjsip_cid_hdr *hdr = pjsip_msg_find_hdr_by_name(msg, &hdrname, NULL);
++    if (!hdr || hdr->id.slen >= 256)
++        return -1;
++
++    // Store logtag
++    char logtag[256];
++    memset(logtag, 0, sizeof(logtag));
++    strncpy(logtag, hdr->id.ptr, hdr->id.slen);
++
++    // Set Channel variable LOGTAG (will be used in pbx messages)
++    pbx_builtin_setvar_helper(chan, "__LOGTAG", logtag);
++    return 0;
++}
++
+ /*! \brief Function called by RTP engine to get local audio RTP peer */
+ static enum ast_rtp_glue_result chan_pjsip_get_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance **instance)
+ {
+@@ -2213,6 +2235,8 @@ static int chan_pjsip_incoming_request(struct ast_sip_session *session, struct p
+ 
+ 	// Store channel hash (calculated from MD5 of the Call-Id header)
+ 	chan_pjsip_get_cidhash(session->channel, rdata->msg_info.msg);
++    // Store channel logtag (from X-Info-Logtag header)
++    chan_pjsip_get_logtag(session->channel, rdata->msg_info.msg);
+ 	return 0;
+ }
+ 
