@@ -11,3 +11,4 @@
 0069423_builtin_feature_macro.patch
 0070492_ignore_from_domain_contact.patch
 0000000_multihomed_media_address_regression.patch
+0000000_asymmetric_rtp_codec_fix.patch

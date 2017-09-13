@@ -1,0 +1,124 @@
+commit 1551a8b166e3bf7045582c7a7e4af03fa2be6a17
+Author: Torrey Searle <torrey@voxbone.com>
+Date:   Fri Jul 28 14:53:44 2017 +0200
+
+    res_rtp_asterisk:  Make P2P bridge Asymmetric codec aware
+    
+    Introduce a new property to rtp-engine to make it aware of
+    the desire for assymetric codecs or not.  If asymmetric codecs
+    is not allowed, the bridge will compare read/write formats
+    and shut down the p2p bridge if needed
+    
+    ASTERISK-26745 #close
+    
+    Change-Id: I0d9c83e5356df81661e58d40a8db565833501a6f
+
+diff --git a/channels/chan_pjsip.c b/channels/chan_pjsip.c
+index e2fd13c..06bd746 100644
+--- a/channels/chan_pjsip.c
++++ b/channels/chan_pjsip.c
+@@ -727,14 +727,11 @@ static struct ast_frame *chan_pjsip_read(struct ast_channel *ast)
+ 
+ 	session = channel->session;
+ 
+-	if (ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
+-		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when it has not been negotiated\n",
+-			ast_format_get_name(f->subclass.format), ast_channel_name(ast));
+-
+-		ast_frfree(f);
+-		return &ast_null_frame;
+-	}
+-
++	/*
++	 * Asymmetric RTP only has one native format set at a time.
++	 * Therefore we need to update the native format to the current
++	 * raw read format BEFORE the native format check
++	 */
+ 	if (!session->endpoint->asymmetric_rtp_codec &&
+ 		ast_format_cmp(ast_channel_rawwriteformat(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
+ 		struct ast_format_cap *caps;
+@@ -761,6 +758,14 @@ static struct ast_frame *chan_pjsip_read(struct ast_channel *ast)
+ 		}
+ 	}
+ 
++	if (ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
++		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when it has not been negotiated\n",
++			ast_format_get_name(f->subclass.format), ast_channel_name(ast));
++
++		ast_frfree(f);
++		return &ast_null_frame;
++	}
++
+ 	if (session->dsp) {
+ 		int dsp_features;
+ 
+diff --git a/include/asterisk/rtp_engine.h b/include/asterisk/rtp_engine.h
+index f9bdc50..0b29f34 100644
+--- a/include/asterisk/rtp_engine.h
++++ b/include/asterisk/rtp_engine.h
+@@ -114,6 +114,8 @@ enum ast_rtp_property {
+ 	AST_RTP_PROPERTY_STUN,
+ 	/*! Enable RTCP support */
+ 	AST_RTP_PROPERTY_RTCP,
++	/*! Enable Asymmetric RTP Codecs */
++	AST_RTP_PROPERTY_ASYMMETRIC_CODEC,
+ 
+ 	/*!
+ 	 * \brief Maximum number of RTP properties supported
+diff --git a/res/res_pjsip_sdp_rtp.c b/res/res_pjsip_sdp_rtp.c
+index a6bd2d7..0e27e0e 100644
+--- a/res/res_pjsip_sdp_rtp.c
++++ b/res/res_pjsip_sdp_rtp.c
+@@ -241,6 +241,7 @@ static int create_rtp(struct ast_sip_session *session, struct ast_sip_session_me
+ 	}
+ 
+ 	ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_NAT, session->endpoint->media.rtp.symmetric);
++	ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_ASYMMETRIC_CODEC, session->endpoint->asymmetric_rtp_codec);
+ 
+ 	if (!session->endpoint->media.rtp.ice_support && (ice = ast_rtp_instance_get_ice(session_media->rtp))) {
+ 		ice->stop(session_media->rtp);
+diff --git a/res/res_rtp_asterisk.c b/res/res_rtp_asterisk.c
+index 018af0d..97dcf73 100644
+--- a/res/res_rtp_asterisk.c
++++ b/res/res_rtp_asterisk.c
+@@ -303,6 +303,7 @@ struct ast_rtp {
+ 	void *data;
+ 	struct ast_rtcp *rtcp;
+ 	struct ast_rtp *bridged;        /*!< Who we are Packet bridged to */
++	unsigned int asymmetric_codec;  /*!< Indicate if asymmetric send/receive codecs are allowed */
+ 
+ 	enum strict_rtp_state strict_rtp_state; /*!< Current state that strict RTP protection is in */
+ 	struct ast_sockaddr strict_rtp_address;  /*!< Remote address information for strict RTP purposes */
+@@ -4847,6 +4848,23 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 		return -1;
+ 	}
+ 
++
++	ao2_replace(rtp->lastrxformat, payload_type->format);
++	ao2_replace(bridged->lasttxformat, payload_type->format);
++
++	/*
++	 * If bridged peer has already received rtp, perform the asymmetric codec check
++	 * if that feature has been activated
++	 */
++	if (!bridged->asymmetric_codec && bridged->lastrxformat != ast_format_none) {
++		if (ast_format_cmp(bridged->lasttxformat, bridged->lastrxformat) == AST_FORMAT_CMP_NOT_EQUAL) {
++			ast_debug(1, "Asymmetric RTP codecs detected (TX: %s, RX: %s) sending frame to core\n",
++					ast_format_get_name(bridged->lasttxformat),
++					ast_format_get_name(bridged->lastrxformat));
++			return -1;
++		}
++	}
++
+ 	/* If the marker bit has been explicitly set turn it on */
+ 	if (ast_test_flag(rtp, FLAG_NEED_MARKER_BIT)) {
+ 		mark = 1;
+@@ -5492,6 +5510,8 @@ static void ast_rtp_prop_set(struct ast_rtp_instance *instance, enum ast_rtp_pro
+ 				rtp->rtcp = NULL;
+ 			}
+ 		}
++	} else if (property == AST_RTP_PROPERTY_ASYMMETRIC_CODEC) {
++		rtp->asymmetric_codec = value;
+ 	}
+ }
+ 
