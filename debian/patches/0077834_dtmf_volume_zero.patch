@@ -1,0 +1,31 @@
+diff --git a/res/res_rtp_asterisk.c b/res/res_rtp_asterisk.c
+index d0470227..6189095 100644
+--- a/res/res_rtp_asterisk.c
++++ b/res/res_rtp_asterisk.c
+@@ -3262,7 +3262,7 @@ static int ast_rtp_dtmf_begin(struct ast_rtp_instance *instance, char digit)
+ 	for (i = 0; i < 2; i++) {
+ 		int ice;
+ 
+-		rtpheader[3] = htonl((digit << 24) | (0xa << 16) | (rtp->send_duration));
++		rtpheader[3] = htonl((digit << 24) | (0x0 << 16) | (rtp->send_duration));
+ 		res = rtp_sendto(instance, (void *) rtpheader, hdrlen + 4, 0, &remote_address, &ice);
+ 		if (res < 0) {
+ 			ast_log(LOG_ERROR, "RTP Transmission error to %s: %s\n",
+@@ -3309,7 +3309,7 @@ static int ast_rtp_dtmf_continuation(struct ast_rtp_instance *instance)
+ 	rtpheader[0] = htonl((2 << 30) | (rtp->send_payload << 16) | (rtp->seqno));
+ 	rtpheader[1] = htonl(rtp->lastdigitts);
+ 	rtpheader[2] = htonl(rtp->ssrc);
+-	rtpheader[3] = htonl((rtp->send_digit << 24) | (0xa << 16) | (rtp->send_duration));
++	rtpheader[3] = htonl((rtp->send_digit << 24) | (0x0 << 16) | (rtp->send_duration));
+ 
+ 	/* Boom, send it on out */
+ 	res = rtp_sendto(instance, (void *) rtpheader, hdrlen + 4, 0, &remote_address, &ice);
+@@ -3377,7 +3377,7 @@ static int ast_rtp_dtmf_end_with_duration(struct ast_rtp_instance *instance, cha
+ 	/* Construct the packet we are going to send */
+ 	rtpheader[1] = htonl(rtp->lastdigitts);
+ 	rtpheader[2] = htonl(rtp->ssrc);
+-	rtpheader[3] = htonl((digit << 24) | (0xa << 16) | (rtp->send_duration));
++	rtpheader[3] = htonl((digit << 24) | (0x0 << 16) | (rtp->send_duration));
+ 	rtpheader[3] |= htonl((1 << 23));
+ 
+ 	/* Send it 3 times, that's the magical number */
