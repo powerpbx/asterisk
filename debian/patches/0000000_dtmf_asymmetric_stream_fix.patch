@@ -1,0 +1,169 @@
+From 221d8a5c24365c0661efe1ab086f604b4c6b49d0 Mon Sep 17 00:00:00 2001
+From: Richard Mudgett <rmudgett@digium.com>
+Date: Wed, 13 Sep 2017 21:31:52 -0500
+Subject: [PATCH] res_rtp_asterisk.c: Fix bridge_p2p_rtp_write() reentrancy
+ potential.
+
+The bridge_p2p_rtp_write() has potential reentrancy problems.
+
+* Accessing the bridged RTP members must be done with the instance1 lock
+held.  The DTMF and asymmetric codec checks must be split to be done with
+the correct RTP instance struct locked.  i.e., They must be done when
+working on the appropriate side of the point to point bridge.
+
+* Forcing the RTP mark bit was referencing the wrong side of the point to
+point bridge.  The set mark bit is used everywhere else to set the mark
+bit when sending not receiving.
+
+The patches for ASTERISK_26745 and ASTERISK_27158 did not take into
+account that not everything carried by RTP uses a codec.  The telephony
+DTMF events are not exchanged with a codec.  As a result when
+RFC2833/RFC4733 sent digits you would crash if "core set debug 1" is
+enabled, the DTMF digits would always get passed to the core even though
+the local native RTP bridge is active, and the DTMF digits would go out
+using the wrong SSRC id.
+
+* Add protection for non-format payload types like DTMF when updating the
+lastrxformat and lasttxformat.  Also protect against non-format payload
+types when checking for asymmetric codecs.
+
+ASTERISK-27292
+
+Change-Id: I6344ab7de21e26f84503c4d1fca1a41579364186
+---
+ res/res_rtp_asterisk.c | 85 +++++++++++++++++++++++++++++---------------------
+ 1 file changed, 50 insertions(+), 35 deletions(-)
+
+diff --git a/res/res_rtp_asterisk.c b/res/res_rtp_asterisk.c
+index 5b10a99d2be..e5a7cdb40c2 100644
+--- a/res/res_rtp_asterisk.c
++++ b/res/res_rtp_asterisk.c
+@@ -5063,7 +5063,7 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 	struct ast_rtp_instance *instance1, unsigned int *rtpheader, int len, int hdrlen)
+ {
+ 	struct ast_rtp *rtp = ast_rtp_instance_get_data(instance);
+-	struct ast_rtp *bridged = ast_rtp_instance_get_data(instance1);
++	struct ast_rtp *bridged;
+ 	int res = 0, payload = 0, bridged_payload = 0, mark;
+ 	RAII_VAR(struct ast_rtp_payload_type *, payload_type, NULL, ao2_cleanup);
+ 	int reconstruct = ntohl(rtpheader[0]);
+@@ -5073,7 +5073,7 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 
+ 	/* Get fields from packet */
+ 	payload = (reconstruct & 0x7f0000) >> 16;
+-	mark = (((reconstruct & 0x800000) >> 23) != 0);
++	mark = (reconstruct & 0x800000) >> 23;
+ 
+ 	/* Check what the payload value should be */
+ 	payload_type = ast_rtp_codecs_get_payload(ast_rtp_instance_get_codecs(instance), payload);
+@@ -5095,12 +5095,6 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 		return -1;
+ 	}
+ 
+-	/* If bridged peer is in dtmf, feed all packets to core until it finishes to avoid infinite dtmf */
+-	if (bridged->sending_digit) {
+-		ast_debug(1, "Feeding packets to core until DTMF finishes\n");
+-		return -1;
+-	}
+-
+ 	/*
+ 	 * Even if we are no longer in dtmf, we could still be receiving
+ 	 * re-transmissions of the last dtmf end still.  Feed those to the
+@@ -5111,35 +5105,10 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 		return -1;
+ 	}
+ 
+-
+-	ao2_replace(rtp->lastrxformat, payload_type->format);
+-	ao2_replace(bridged->lasttxformat, payload_type->format);
+-
+-	/*
+-	 * If bridged peer has already received rtp, perform the asymmetric codec check
+-	 * if that feature has been activated
+-	 */
+-	if (!bridged->asymmetric_codec && bridged->lastrxformat != ast_format_none) {
+-		if (ast_format_cmp(bridged->lasttxformat, bridged->lastrxformat) == AST_FORMAT_CMP_NOT_EQUAL) {
+-			ast_debug(1, "Asymmetric RTP codecs detected (TX: %s, RX: %s) sending frame to core\n",
+-					ast_format_get_name(bridged->lasttxformat),
+-					ast_format_get_name(bridged->lastrxformat));
+-			return -1;
+-		}
++	if (payload_type->asterisk_format) {
++		ao2_replace(rtp->lastrxformat, payload_type->format);
+ 	}
+ 
+-	/* If the marker bit has been explicitly set turn it on */
+-	if (ast_test_flag(rtp, FLAG_NEED_MARKER_BIT)) {
+-		mark = 1;
+-		ast_clear_flag(rtp, FLAG_NEED_MARKER_BIT);
+-	}
+-
+-	/* Reconstruct part of the packet */
+-	reconstruct &= 0xFF80FFFF;
+-	reconstruct |= (bridged_payload << 16);
+-	reconstruct |= (mark << 23);
+-	rtpheader[0] = htonl(reconstruct);
+-
+ 	/*
+ 	 * We have now determined that we need to send the RTP packet
+ 	 * out the bridged instance to do local bridging so we must unlock
+@@ -5155,6 +5124,40 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 	ao2_unlock(instance);
+ 	ao2_lock(instance1);
+ 
++	/*
++	 * Get the peer rtp pointer now to emphasize that using it
++	 * must happen while instance1 is locked.
++	 */
++	bridged = ast_rtp_instance_get_data(instance1);
++
++
++	/* If bridged peer is in dtmf, feed all packets to core until it finishes to avoid infinite dtmf */
++	if (bridged->sending_digit) {
++		ast_debug(1, "Feeding packet to core until DTMF finishes\n");
++		ao2_unlock(instance1);
++		ao2_lock(instance);
++		return -1;
++	}
++
++	if (payload_type->asterisk_format) {
++		/*
++		 * If bridged peer has already received rtp, perform the asymmetric codec check
++		 * if that feature has been activated
++		 */
++		if (!bridged->asymmetric_codec
++			&& bridged->lastrxformat != ast_format_none
++			&& ast_format_cmp(payload_type->format, bridged->lastrxformat) == AST_FORMAT_CMP_NOT_EQUAL) {
++			ast_debug(1, "Asymmetric RTP codecs detected (TX: %s, RX: %s) sending frame to core\n",
++				ast_format_get_name(payload_type->format),
++				ast_format_get_name(bridged->lastrxformat));
++			ao2_unlock(instance1);
++			ao2_lock(instance);
++			return -1;
++		}
++
++		ao2_replace(bridged->lasttxformat, payload_type->format);
++	}
++
+ 	ast_rtp_instance_get_remote_address(instance1, &remote_address);
+ 
+ 	if (ast_sockaddr_isnull(&remote_address)) {
+@@ -5164,6 +5167,18 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
+ 		return 0;
+ 	}
+ 
++	/* If the marker bit has been explicitly set turn it on */
++	if (ast_test_flag(bridged, FLAG_NEED_MARKER_BIT)) {
++		mark = 1;
++		ast_clear_flag(bridged, FLAG_NEED_MARKER_BIT);
++	}
++
++	/* Reconstruct part of the packet */
++	reconstruct &= 0xFF80FFFF;
++	reconstruct |= (bridged_payload << 16);
++	reconstruct |= (mark << 23);
++	rtpheader[0] = htonl(reconstruct);
++
+ 	/* Send the packet back out */
+ 	res = rtp_sendto(instance1, (void *)rtpheader, len, 0, &remote_address, &ice);
+ 	if (res < 0) {

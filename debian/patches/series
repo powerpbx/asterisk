@@ -14,3 +14,5 @@
 0000000_asymmetric_rtp_codec_fix.patch
 0000000_direct_media_update_fixup.patch
 0000000_confbridge_cbann_stuck.patch
+0000000_dtmf_asymmetric_stream_fix.patch
+0077834_dtmf_volume_zero.patch
