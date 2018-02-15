@@ -8,7 +8,7 @@ Index: main/asterisk.c
                  "certain conditions. Type 'core show license' for details.\n" \
 -                "=========================================================================\n", ast_get_version()) \
 +                "=========================================================================\n" \
-+                "Version O.A.S.I.S. de Asterisk %s mantenida por Irontec S.L.\n" \
++                "Version Art3mis de Asterisk %s mantenida por Irontec S.L.\n" \
 +                "=========================================================================\n", \
 +                ast_get_version(), ast_get_version()) \
  
