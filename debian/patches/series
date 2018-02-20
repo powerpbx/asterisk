@@ -16,3 +16,4 @@
 0000000_confbridge_cbann_stuck.patch
 0000000_dtmf_asymmetric_stream_fix.patch
 0077834_dtmf_volume_zero.patch
+0082596_endpoint_not_inuse_default.patch
