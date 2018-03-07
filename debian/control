@@ -18,7 +18,7 @@ Pre-Depends: ${misc:Pre-Depends}
 Depends: ${misc:Depends}, ${shlibs:Depends},
     ivozprovider-asterisk-config
 Conflicts: asterisk-bristuff, asterisk-classic, asterisk-rsp, asterisk
-Description: IVOZ Provider - Asterisk - Asterisk Binaries (OASIS patches included)
+Description: IVOZ Provider - Asterisk - Asterisk Binaries (custom patches included)
  Asterisk is an Open Source PBX and telephony toolkit.  It is, in a
  sense, middleware between Internet and telephony channels on the bottom,
  and Internet and telephony applications at the top.
@@ -28,3 +28,10 @@ Description: IVOZ Provider - Asterisk - Asterisk Binaries (OASIS patches include
  .
 Homepage: http://www.irontec.com
 
+Package: ivozprovider-asterisk-dbg
+Architecture: any
+Section: comm
+Priority: optional
+Depends: ivozprovider-asterisk (= ${binary:Version}), ${misc:Depends}
+Description: IVOZ Provider - Asterisk - Asterisk Debugging Symbols
+ .
