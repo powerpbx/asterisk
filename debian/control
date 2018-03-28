@@ -8,7 +8,7 @@ Build-Depends: debhelper, dh-systemd, quilt, libncurses5-dev, libxml2-dev, wget,
     libgsm1-dev, portaudio19-dev, python-dev, libspandsp-dev, libtiff5-dev, ca-certificates,
     xmlstarlet, libcurl3
 Standards-Version: 3.9.6
-Maintainer: Irontec OASIS Team <oasis@irontec.com>
+Maintainer: Irontec IvozProvider Team <ivozprovider@irontec.com>
 
 Package: ivozprovider-asterisk
 Architecture: any
