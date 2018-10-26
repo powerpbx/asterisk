@@ -610,7 +610,7 @@ void * attribute_malloc _ast_calloc(size_t num, size_t len, const char *file, in
 	_ast_realloc((p), (len), __FILE__, __LINE__, __PRETTY_FUNCTION__)
 
 AST_INLINE_API(
-void * attribute_malloc _ast_realloc(void *p, size_t len, const char *file, int lineno, const char *func),
+void *_ast_realloc(void *p, size_t len, const char *file, int lineno, const char *func),
 {
 	void *newp;
 
@@ -721,7 +721,13 @@ int _ast_vasprintf(char **ret, const char *file, int lineno, const char *func, c
 
 	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, -1);
 
-	if ((res = vasprintf(ret, fmt, ap)) == -1) {
+	res = vasprintf(ret, fmt, ap);
+	if (res < 0) {
+		/*
+		 * *ret is undefined so set to NULL to ensure it is
+		 * initialized to something useful.
+		 */
+		*ret = NULL;
 		MALLOC_FAILURE_MSG;
 	}
 
@@ -854,6 +860,13 @@ void DO_CRASH_NORETURN __ast_assert_failed(int condition, const char *condition_
 
 #ifdef AST_DEVMODE
 #define ast_assert(a) _ast_assert(a, # a, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define ast_assert_return(a, ...) \
+({ \
+	if (__builtin_expect(!(a), 1)) { \
+		_ast_assert(0, # a, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
+		return __VA_ARGS__; \
+	}\
+})
 static void force_inline _ast_assert(int condition, const char *condition_str, const char *file, int line, const char *function)
 {
 	if (__builtin_expect(!condition, 1)) {
@@ -862,6 +875,12 @@ static void force_inline _ast_assert(int condition, const char *condition_str, c
 }
 #else
 #define ast_assert(a)
+#define ast_assert_return(a, ...) \
+({ \
+	if (__builtin_expect(!(a), 1)) { \
+		return __VA_ARGS__; \
+	}\
+})
 #endif
 
 /*!
@@ -1081,7 +1100,7 @@ static inline void _raii_cleanup_block(_raii_cleanup_block_t *b) { (*b)(); }
  */
 char *ast_crypt(const char *key, const char *salt);
 
-/*
+/*!
  * \brief Asterisk wrapper around crypt(3) for encrypting passwords.
  *
  * This function will generate a random salt and encrypt the given password.
@@ -1094,7 +1113,7 @@ char *ast_crypt(const char *key, const char *salt);
  */
 char *ast_crypt_encrypt(const char *key);
 
-/*
+/*!
  * \brief Asterisk wrapper around crypt(3) for validating passwords.
  *
  * \param key User's password to validate.
@@ -1104,7 +1123,7 @@ char *ast_crypt_encrypt(const char *key);
  */
 int ast_crypt_validate(const char *key, const char *expected);
 
-/*
+/*!
  * \brief Test that a file exists and is readable by the effective user.
  * \since 13.7.0
  *
@@ -1114,7 +1133,7 @@ int ast_crypt_validate(const char *key, const char *expected);
  */
 int ast_file_is_readable(const char *filename);
 
-/*
+/*!
  * \brief Compare 2 major.minor.patch.extra version strings.
  * \since 13.7.0
  *
@@ -1127,7 +1146,7 @@ int ast_file_is_readable(const char *filename);
  */
 int ast_compare_versions(const char *version1, const char *version2);
 
-/*
+/*!
  * \brief Test that an OS supports IPv6 Networking.
  * \since 13.14.0
  *
@@ -1135,5 +1154,63 @@ int ast_compare_versions(const char *version1, const char *version2);
  * \return False (zero) if the OS doesn't support IPv6.
  */
 int ast_check_ipv6(void);
+
+enum ast_fd_flag_operation {
+	AST_FD_FLAG_SET,
+	AST_FD_FLAG_CLEAR,
+};
+
+/*!
+ * \brief Set flags on the given file descriptor
+ * \since 13.19
+ *
+ * If getting or setting flags of the given file descriptor fails, logs an
+ * error message.
+ *
+ * \param fd File descriptor to set flags on
+ * \param flags The flag(s) to set
+ *
+ * \return -1 on error
+ * \return 0 if successful
+ */
+#define ast_fd_set_flags(fd, flags) \
+	__ast_fd_set_flags((fd), (flags), AST_FD_FLAG_SET, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+/*!
+ * \brief Clear flags on the given file descriptor
+ * \since 13.19
+ *
+ * If getting or setting flags of the given file descriptor fails, logs an
+ * error message.
+ *
+ * \param fd File descriptor to clear flags on
+ * \param flags The flag(s) to clear
+ *
+ * \return -1 on error
+ * \return 0 if successful
+ */
+#define ast_fd_clear_flags(fd, flags) \
+	__ast_fd_set_flags((fd), (flags), AST_FD_FLAG_CLEAR, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+int __ast_fd_set_flags(int fd, int flags, enum ast_fd_flag_operation op,
+	const char *file, int lineno, const char *function);
+
+/*!
+ * \brief Set the current thread's user interface status.
+ *
+ * \param is_user_interface Non-zero to mark the thread as a user interface.
+ *
+ * \return 0 if successfuly marked current thread.
+ * \return Non-zero if marking current thread failed.
+ */
+int ast_thread_user_interface_set(int is_user_interface);
+
+/*!
+ * \brief Indicates whether the current thread is a user interface
+ *
+ * \return True (non-zero) if thread is a user interface.
+ * \return False (zero) if thread is not a user interface.
+ */
+int ast_thread_is_user_interface(void);
 
 #endif /* _ASTERISK_UTILS_H */

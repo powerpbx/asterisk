@@ -1,9 +1,11 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import optparse
 import socket
-import urlparse  # Python 2.7 required for Literal IPv6 Addresses
-
+try:
+    from urllib.parse import urlparse
+except ImportError:
+    from urlparse import urlparse # Python 2.7 required for Literal IPv6 Addresses
 import astdicts
 import astconfigparser
 
@@ -77,6 +79,46 @@ def merge_value(key=None, val=None, section=None, pjsip=None,
                   section_to if section_to else section,
                   pjsip, nmapped, type)
 
+def merge_codec_value(key=None, val=None, section=None, pjsip=None,
+                nmapped=None, type='endpoint', section_to=None,
+                key_to=None):
+    """Merge values from allow/deny with those from the default. Special treatment for all"""
+    def _merge_codec_value(k, v, s, r, n):
+        merge_codec_value(key if key else k, v, s, r, n, type, section_to, key_to)
+
+    # if no value or section return the merge_codec_value
+    # function with the enclosed key and type
+    if not val and not section:
+        return _merge_codec_value
+
+    if key == 'allow':
+        try:
+            disallow = sip.get(section, 'disallow')[0]
+            if disallow == 'all':
+                #don't inherit
+                for i in sip.get(section, 'allow'):
+                    set_value(key, i, section, pjsip, nmapped, type)
+            else:
+                merge_value(key, val, section, pjsip, nmapped, type, section_to, key_to)
+        except LookupError:
+            print("lookup error")
+            merge_value(key, val, section, pjsip, nmapped, type, section_to, key_to)
+            return
+    elif key == 'disallow':
+        try:
+            allow = sip.get(section, 'allow')[0]
+            if allow == 'all':
+                #don't inherit
+                for i in sip.get(section, 'disallow'):
+                    set_value(key, i, section, pjsip, nmapped, type)
+            else:
+                merge_value(key, val, section, pjsip, nmapped, type, section_to, key_to)
+        except LookupError:
+            merge_value(key, val, section, pjsip, nmapped, type, section_to, key_to)
+            return
+    else:
+        merge_value(key, val, section, pjsip, nmapped, type, section_to, key_to)
+
 
 def non_mapped(nmapped):
     """Write non-mapped sip.conf values to the non-mapped object"""
@@ -115,6 +157,27 @@ def set_dtmfmode(key, val, section, pjsip, nmapped):
         nmapped(section, key, val + " ; did not fully map - set to none")
         set_value(key, 'none', section, pjsip, nmapped)
 
+
+def setup_udptl(section, pjsip, nmapped):
+    """Sets values from udptl into the appropriate pjsip.conf options."""
+    try:
+        val = sip.get(section, 't38pt_udptl')[0]
+    except LookupError:
+        try:
+            val = sip.get('general', 't38pt_udptl')[0]
+        except LookupError:
+            return
+
+    ec = 'none'
+    if 'yes' in val:
+        set_value('t38_udptl', 'yes', section, pjsip, nmapped)
+    if 'no' in val:
+        set_value('t38_udptl', 'no', section, pjsip, nmapped)
+    if 'redundancy' in val:
+        ec = 'redundancy'
+    if 'fec' in val:
+        ec = 'fec'
+    set_value('t38_udptl_ec', ec, section, pjsip, nmapped)
 
 def from_nat(key, val, section, pjsip, nmapped):
     """Sets values from nat into the appropriate pjsip.conf options."""
@@ -230,7 +293,7 @@ def build_host(config, host, section='general', port_key=None):
 
     # Literal IPv6 (like [::]), IPv4, or hostname
     # does not work for IPv6 without brackets; case catched above
-    url = urlparse.urlparse('sip://' + host)
+    url = urlparse('sip://' + host)
 
     if port_key:
         try:
@@ -374,8 +437,7 @@ def from_dtlsenable(key, val, section, pjsip, nmapped):
 ###############################################################################
 
 # options in pjsip.conf on an endpoint that have no sip.conf equivalent:
-# type, 100rel, trust_id_outbound, aggregate_mwi,
-# connected_line_method
+# type, 100rel, trust_id_outbound, aggregate_mwi, connected_line_method
 
 # known sip.conf peer keys that can be mapped to a pjsip.conf section/key
 peer_map = [
@@ -383,10 +445,11 @@ peer_map = [
     ###########################################################################
     ['context',            set_value],
     ['dtmfmode',           set_dtmfmode],
-    ['disallow',           merge_value],
-    ['allow',              merge_value],
+    ['disallow',           merge_codec_value],
+    ['allow',              merge_codec_value],
     ['nat',                from_nat],            # rtp_symmetric, force_rport,
                                                  # rewrite_contact
+    ['rtptimeout',         set_value('rtp_timeout')],
     ['icesupport',         set_value('ice_support')],
     ['autoframing',        set_value('use_ptime')],
     ['outboundproxy',      set_value('outbound_proxy')],
@@ -529,7 +592,7 @@ def split_hostport(addr):
 
     # Literal IPv6 (like [::]), IPv4, or hostname
     # does not work for IPv6 without brackets; case catched above
-    url = urlparse.urlparse('sip://' + addr)
+    url = urlparse('sip://' + addr)
     # TODO Does not compress IPv6, for example 0:0:0:0:0:0:0:0 should get [::]
     return (url.hostname, url.port)
 
@@ -777,11 +840,11 @@ def create_tls(sip, pjsip, nmapped):
         method = sip.multi_get('general', ['tlsclientmethod',
                                            'sslclientmethod'])[0]
         if section != 'transport-' + protocol + '6':  # print only once
-            print 'In chan_sip, you specified the TLS version. With chan_sip,' \
+            print('In chan_sip, you specified the TLS version. With chan_sip,' \
                   ' this was just for outbound client connections. In' \
                   ' chan_pjsip, this value is for client and server. Instead,' \
                   ' consider not to specify \'tlsclientmethod\' for chan_sip' \
-                  ' and \'method = sslv23\' for chan_pjsip.'
+                  ' and \'method = sslv23\' for chan_pjsip.')
     except LookupError:
         """
         OpenSSL emerged during the 90s. SSLv2 and SSLv3 were the only
@@ -1068,6 +1131,7 @@ def map_peer(sip, section, pjsip, nmapped):
         except LookupError:
             pass  # key not found in sip.conf
 
+    setup_udptl(section, pjsip, nmapped)
 
 def find_non_mapped(sections, nmapped):
     """
@@ -1098,6 +1162,13 @@ def map_system(sip, pjsip, nmapped):
     try:
         user_agent = sip.get('general', 'useragent')[0]
         set_value('user_agent', user_agent, 'global', pjsip, nmapped, 'global')
+    except LookupError:
+        pass
+
+
+    try:
+        sipdebug = sip.get('general', 'sipdebug')[0]
+        set_value('debug', sipdebug, 'global', pjsip, nmapped, 'global')
     except LookupError:
         pass
 
@@ -1133,7 +1204,7 @@ def convert(sip, filename, non_mappings, include):
     map specific sections from sip.conf into it.
     Returns the new pjsip.conf object once completed
     """
-    pjsip = astconfigparser.MultiOrderedConfigParser()
+    pjsip = sip.__class__()
     non_mappings[filename] = astdicts.MultiOrderedDict()
     nmapped = non_mapped(non_mappings[filename])
     if not include:
@@ -1176,7 +1247,7 @@ def write_pjsip(filename, pjsip, non_mappings):
             pjsip.write(fp)
 
     except IOError:
-        print "Could not open file ", filename, " for writing"
+        print("Could not open file " + filename + " for writing")
 
 ###############################################################################
 
@@ -1207,11 +1278,11 @@ if __name__ == "__main__":
     sip_filename, pjsip_filename = cli_options()
     # configuration parser for sip.conf
     sip = astconfigparser.MultiOrderedConfigParser()
-    print 'Please, report any issue at:'
-    print '    https://issues.asterisk.org/'
-    print 'Reading', sip_filename
+    print('Please, report any issue at:')
+    print('    https://issues.asterisk.org/')
+    print('Reading ' + sip_filename)
     sip.read(sip_filename)
-    print 'Converting to PJSIP...'
+    print('Converting to PJSIP...')
     pjsip, non_mappings = convert(sip, pjsip_filename, dict(), False)
-    print 'Writing', pjsip_filename
+    print('Writing ' + pjsip_filename)
     write_pjsip(pjsip_filename, pjsip, non_mappings)

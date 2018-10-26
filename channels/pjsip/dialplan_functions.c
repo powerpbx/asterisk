@@ -68,6 +68,18 @@
 		<ref type="function">PJSIP_SEND_SESSION_REFRESH</ref>
 	</see-also>
 </function>
+<function name="PJSIP_DTMF_MODE" language="en_US">
+	<synopsis>
+		Get or change the DTMF mode for a SIP call.
+	</synopsis>
+	<syntax>
+	</syntax>
+	<description>
+		<para>When read, returns the current DTMF mode</para>
+		<para>When written, sets the current DTMF mode</para>
+		<para>This function uses the same DTMF mode naming as the dtmf_mode configuration option</para>
+	</description>
+</function>
 <function name="PJSIP_SEND_SESSION_REFRESH" language="en_US">
 	<synopsis>
 		W/O: Initiate a session refresh via an UPDATE or re-INVITE on an established media session
@@ -376,13 +388,23 @@
 						</enumlist>
 					</enum>
 					<enum name="target_uri">
-						<para>The request URI of the <literal>INVITE</literal> request associated with the creation of this channel.</para>
+						<para>The contact URI where requests are sent.</para>
 					</enum>
 					<enum name="local_uri">
 						<para>The local URI.</para>
 					</enum>
+					<enum name="local_tag">
+						<para>Tag in From header</para>
+					</enum>
 					<enum name="remote_uri">
 						<para>The remote URI.</para>
+					</enum>
+					<enum name="remote_tag">
+						<para>Tag in To header</para>
+					</enum>
+					<enum name="request_uri">
+						<para>The request URI of the incoming <literal>INVITE</literal>
+						associated with the creation of this channel.</para>
 					</enum>
 					<enum name="t38state">
 						<para>The current state of any T.38 fax on this channel.</para>
@@ -440,6 +462,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 #include "asterisk/app.h"
 #include "asterisk/channel.h"
 #include "asterisk/format.h"
+#include "asterisk/dsp.h"
 #include "asterisk/pbx.h"
 #include "asterisk/res_pjsip.h"
 #include "asterisk/res_pjsip_session.h"
@@ -507,7 +530,13 @@ static int channel_read_rtp(struct ast_channel *chan, const char *type, const ch
 	} else if (!strcmp(type, "direct")) {
 		ast_copy_string(buf, ast_sockaddr_stringify(&media->direct_media_addr), buflen);
 	} else if (!strcmp(type, "secure")) {
-		snprintf(buf, buflen, "%d", media->srtp ? 1 : 0);
+		if (media->srtp) {
+			struct ast_sdp_srtp *srtp = media->srtp;
+			int flag = ast_test_flag(srtp, AST_SRTP_CRYPTO_OFFER_OK);
+			snprintf(buf, buflen, "%d", flag ? 1 : 0);
+		} else {
+			snprintf(buf, buflen, "%d", 0);
+		}
 	} else if (!strcmp(type, "hold")) {
 		snprintf(buf, buflen, "%d", media->held ? 1 : 0);
 	} else {
@@ -638,6 +667,27 @@ static int channel_read_rtcp(struct ast_channel *chan, const char *type, const c
 	return 0;
 }
 
+static int print_escaped_uri(struct ast_channel *chan, const char *type,
+	pjsip_uri_context_e context, const void *uri, char *buf, size_t size)
+{
+	int res;
+	char *buf_copy;
+
+	res = pjsip_uri_print(context, uri, buf, size);
+	if (res < 0) {
+		ast_log(LOG_ERROR, "Channel %s: Unescaped %s too long for %d byte buffer\n",
+			ast_channel_name(chan), type, (int) size);
+
+		/* Empty buffer that likely is not terminated. */
+		buf[0] = '\0';
+		return -1;
+	}
+
+	buf_copy = ast_strdupa(buf);
+	ast_escape_quoted(buf_copy, buf, size);
+	return 0;
+}
+
 /*!
  * \internal \brief Handle reading signalling information
  */
@@ -646,6 +696,7 @@ static int channel_read_pjsip(struct ast_channel *chan, const char *type, const 
 	struct ast_sip_channel_pvt *channel = ast_channel_tech_pvt(chan);
 	char *buf_copy;
 	pjsip_dialog *dlg;
+	int res = 0;
 
 	if (!channel) {
 		ast_log(AST_LOG_WARNING, "Channel %s has no pvt!\n", ast_channel_name(chan));
@@ -671,17 +722,27 @@ static int channel_read_pjsip(struct ast_channel *chan, const char *type, const 
 		return -1;
 #endif
 	} else if (!strcmp(type, "target_uri")) {
-		pjsip_uri_print(PJSIP_URI_IN_REQ_URI, dlg->target, buf, buflen);
-		buf_copy = ast_strdupa(buf);
-		ast_escape_quoted(buf_copy, buf, buflen);
+		res = print_escaped_uri(chan, type, PJSIP_URI_IN_REQ_URI, dlg->target, buf,
+			buflen);
 	} else if (!strcmp(type, "local_uri")) {
-		pjsip_uri_print(PJSIP_URI_IN_FROMTO_HDR, dlg->local.info->uri, buf, buflen);
+		res = print_escaped_uri(chan, type, PJSIP_URI_IN_FROMTO_HDR, dlg->local.info->uri,
+			buf, buflen);
+	} else if (!strcmp(type, "local_tag")) {
+		ast_copy_pj_str(buf, &dlg->local.info->tag, buflen);
 		buf_copy = ast_strdupa(buf);
 		ast_escape_quoted(buf_copy, buf, buflen);
 	} else if (!strcmp(type, "remote_uri")) {
-		pjsip_uri_print(PJSIP_URI_IN_FROMTO_HDR, dlg->remote.info->uri, buf, buflen);
+		res = print_escaped_uri(chan, type, PJSIP_URI_IN_FROMTO_HDR,
+			dlg->remote.info->uri, buf, buflen);
+	} else if (!strcmp(type, "remote_tag")) {
+		ast_copy_pj_str(buf, &dlg->remote.info->tag, buflen);
 		buf_copy = ast_strdupa(buf);
 		ast_escape_quoted(buf_copy, buf, buflen);
+	} else if (!strcmp(type, "request_uri")) {
+		if (channel->session->request_uri) {
+			res = print_escaped_uri(chan, type, PJSIP_URI_IN_REQ_URI,
+				channel->session->request_uri, buf, buflen);
+		}
 	} else if (!strcmp(type, "t38state")) {
 		ast_copy_string(buf, t38state_to_string[channel->session->t38state], buflen);
 	} else if (!strcmp(type, "local_addr")) {
@@ -717,7 +778,7 @@ static int channel_read_pjsip(struct ast_channel *chan, const char *type, const 
 		return -1;
 	}
 
-	return 0;
+	return res;
 }
 
 /*! \brief Struct used to push function arguments to task processor */
@@ -843,7 +904,7 @@ int pjsip_acf_channel_read(struct ast_channel *chan, const char *cmd, char *data
 	func_args.field = args.field;
 	func_args.buf = buf;
 	func_args.len = len;
-	if (ast_sip_push_task_synchronous(func_args.session->serializer, read_pjsip, &func_args)) {
+	if (ast_sip_push_task_wait_serializer(func_args.session->serializer, read_pjsip, &func_args)) {
 		ast_log(LOG_WARNING, "Unable to read properties of channel %s: failed to push task\n", ast_channel_name(chan));
 		ao2_ref(func_args.session, -1);
 		return -1;
@@ -1036,7 +1097,35 @@ int pjsip_acf_media_offer_write(struct ast_channel *chan, const char *cmd, char 
 		mdata.media_type = AST_MEDIA_TYPE_VIDEO;
 	}
 
-	return ast_sip_push_task_synchronous(channel->session->serializer, media_offer_write_av, &mdata);
+	return ast_sip_push_task_wait_serializer(channel->session->serializer, media_offer_write_av, &mdata);
+}
+
+int pjsip_acf_dtmf_mode_read(struct ast_channel *chan, const char *cmd, char *data, char *buf, size_t len)
+{
+	struct ast_sip_channel_pvt *channel;
+
+	if (!chan) {
+		ast_log(LOG_WARNING, "No channel was provided to %s function.\n", cmd);
+		return -1;
+	}
+
+	ast_channel_lock(chan);
+	if (strcmp(ast_channel_tech(chan)->type, "PJSIP")) {
+		ast_log(LOG_WARNING, "Cannot call %s on a non-PJSIP channel\n", cmd);
+		ast_channel_unlock(chan);
+		return -1;
+	}
+
+	channel = ast_channel_tech_pvt(chan);
+
+	if (ast_sip_dtmf_to_str(channel->session->dtmf, buf, len) < 0) {
+		ast_log(LOG_WARNING, "Unknown DTMF mode %d on PJSIP channel %s\n", channel->session->dtmf, ast_channel_name(chan));
+		ast_channel_unlock(chan);
+		return -1;
+	}
+
+	ast_channel_unlock(chan);
+	return 0;
 }
 
 struct refresh_data {
@@ -1065,6 +1154,120 @@ static int sip_session_response_cb(struct ast_sip_session *session, pjsip_rx_dat
 	ao2_ref(fmt, -1);
 
 	return 0;
+}
+
+static int dtmf_mode_refresh_cb(void *obj)
+{
+	struct refresh_data *data = obj;
+
+	if (data->session->inv_session->state == PJSIP_INV_STATE_CONFIRMED) {
+		ast_debug(3, "Changing DTMF mode on channel %s after OFFER/ANSWER completion. Sending session refresh\n", ast_channel_name(data->session->channel));
+
+		ast_sip_session_refresh(data->session, NULL, NULL,
+			sip_session_response_cb, data->method, 1);
+	} else if (data->session->inv_session->state == PJSIP_INV_STATE_INCOMING) {
+		ast_debug(3, "Changing DTMF mode on channel %s during OFFER/ANSWER exchange. Updating SDP answer\n", ast_channel_name(data->session->channel));
+		ast_sip_session_regenerate_answer(data->session, NULL);
+	}
+
+	return 0;
+}
+
+int pjsip_acf_dtmf_mode_write(struct ast_channel *chan, const char *cmd, char *data, const char *value)
+{
+	struct ast_sip_channel_pvt *channel;
+	struct chan_pjsip_pvt *pjsip_pvt;
+	int dsp_features = 0;
+	int dtmf = -1;
+	struct refresh_data rdata = {
+			.method = AST_SIP_SESSION_REFRESH_METHOD_INVITE,
+		};
+
+	if (!chan) {
+		ast_log(LOG_WARNING, "No channel was provided to %s function.\n", cmd);
+		return -1;
+	}
+
+	ast_channel_lock(chan);
+	if (strcmp(ast_channel_tech(chan)->type, "PJSIP")) {
+		ast_log(LOG_WARNING, "Cannot call %s on a non-PJSIP channel\n", cmd);
+		ast_channel_unlock(chan);
+		return -1;
+	}
+
+	channel = ast_channel_tech_pvt(chan);
+	rdata.session = channel->session;
+
+	dtmf = ast_sip_str_to_dtmf(value);
+
+	if (dtmf == -1) {
+		ast_log(LOG_WARNING, "Cannot set DTMF mode to '%s' on channel '%s' as value is invalid.\n", value,
+			ast_channel_name(chan));
+		ast_channel_unlock(chan);
+		return -1;
+	}
+
+	if (channel->session->dtmf == dtmf) {
+		/* DTMF mode unchanged, nothing to do! */
+		ast_channel_unlock(chan);
+		return 0;
+	}
+
+	channel->session->dtmf = dtmf;
+
+	pjsip_pvt = channel->pvt;
+	if (pjsip_pvt->media[SIP_MEDIA_AUDIO]  && (pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp) {
+		if (channel->session->dtmf == AST_SIP_DTMF_RFC_4733) {
+			ast_rtp_instance_set_prop((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_PROPERTY_DTMF, 1);
+			ast_rtp_instance_dtmf_mode_set((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_DTMF_MODE_RFC2833);
+		} else if (channel->session->dtmf == AST_SIP_DTMF_INFO) {
+			ast_rtp_instance_set_prop((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_PROPERTY_DTMF, 0);
+			ast_rtp_instance_dtmf_mode_set((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_DTMF_MODE_NONE);
+		} else if (channel->session->dtmf == AST_SIP_DTMF_INBAND) {
+			ast_rtp_instance_set_prop((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_PROPERTY_DTMF, 0);
+			ast_rtp_instance_dtmf_mode_set((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_DTMF_MODE_INBAND);
+		} else if (channel->session->dtmf == AST_SIP_DTMF_NONE) {
+			ast_rtp_instance_set_prop((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_PROPERTY_DTMF, 0);
+			ast_rtp_instance_dtmf_mode_set((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_DTMF_MODE_NONE);
+		} else if (channel->session->dtmf == AST_SIP_DTMF_AUTO) {
+			if (ast_rtp_instance_dtmf_mode_get((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp) != AST_RTP_DTMF_MODE_RFC2833) {
+				/* no RFC4733 negotiated, enable inband */
+				ast_rtp_instance_dtmf_mode_set((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_DTMF_MODE_INBAND);
+			}
+		} else if (channel->session->dtmf == AST_SIP_DTMF_AUTO_INFO) {
+			ast_rtp_instance_set_prop((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_PROPERTY_DTMF, 0);
+			if (ast_rtp_instance_dtmf_mode_get((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp) == AST_RTP_DTMF_MODE_INBAND) {
+				/* if inband, switch to INFO */
+				ast_rtp_instance_dtmf_mode_set((pjsip_pvt->media[SIP_MEDIA_AUDIO])->rtp, AST_RTP_DTMF_MODE_NONE);
+			}
+		}
+	}
+
+	if (channel->session->dsp) {
+		dsp_features = ast_dsp_get_features(channel->session->dsp);
+	}
+	if (channel->session->dtmf == AST_SIP_DTMF_INBAND ||
+		channel->session->dtmf == AST_SIP_DTMF_AUTO) {
+		dsp_features |= DSP_FEATURE_DIGIT_DETECT;
+	} else {
+		dsp_features &= ~DSP_FEATURE_DIGIT_DETECT;
+	}
+	if (dsp_features) {
+		if (!channel->session->dsp) {
+			if (!(channel->session->dsp = ast_dsp_new())) {
+				ast_channel_unlock(chan);
+				return 0;
+			}
+		}
+		ast_dsp_set_features(channel->session->dsp, dsp_features);
+	} else if (channel->session->dsp) {
+		ast_dsp_free(channel->session->dsp);
+		channel->session->dsp = NULL;
+	}
+
+	ast_channel_unlock(chan);
+
+	return ast_sip_push_task_wait_serializer(channel->session->serializer, dtmf_mode_refresh_cb, &rdata);
 }
 
 static int refresh_write_cb(void *obj)
@@ -1103,5 +1306,5 @@ int pjsip_acf_session_refresh_write(struct ast_channel *chan, const char *cmd, c
 		rdata.method = AST_SIP_SESSION_REFRESH_METHOD_UPDATE;
 	}
 
-	return ast_sip_push_task_synchronous(channel->session->serializer, refresh_write_cb, &rdata);
+	return ast_sip_push_task_wait_serializer(channel->session->serializer, refresh_write_cb, &rdata);
 }

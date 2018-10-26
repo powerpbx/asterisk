@@ -196,7 +196,9 @@ static int gethostbyname_r (const char *name, struct hostent *ret, char *buf,
 */
 struct hostent *ast_gethostbyname(const char *host, struct ast_hostent *hp)
 {
+#ifndef HAVE_GETHOSTBYNAME_R_5
 	int res;
+#endif
 	int herrno;
 	int dots = 0;
 	const char *s;
@@ -206,7 +208,6 @@ struct hostent *ast_gethostbyname(const char *host, struct ast_hostent *hp)
 	   integers, we break with tradition and refuse to look up a
 	   pure integer */
 	s = host;
-	res = 0;
 	while (s && *s) {
 		if (*s == '.')
 			dots++;
@@ -1530,7 +1531,7 @@ char *ast_strsep(char **iss, const char sep, uint32_t flags)
 	int found = 0;
 	char stack[8];
 
-	if (iss == NULL || *iss == '\0') {
+	if (ast_strlen_zero(st)) {
 		return NULL;
 	}
 
@@ -2389,7 +2390,13 @@ int _ast_asprintf(char **ret, const char *file, int lineno, const char *func, co
 	va_list ap;
 
 	va_start(ap, fmt);
-	if ((res = vasprintf(ret, fmt, ap)) == -1) {
+	res = vasprintf(ret, fmt, ap);
+	if (res < 0) {
+		/*
+		 * *ret is undefined so set to NULL to ensure it is
+		 * initialized to something useful.
+		 */
+		*ret = NULL;
 		MALLOC_FAILURE_MSG;
 	}
 	va_end(ap);
@@ -2499,7 +2506,7 @@ char *ast_eid_to_str(char *s, int maxlen, struct ast_eid *eid)
 	return os;
 }
 
-#if defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(__Darwin__)
+#if defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(__DragonFly__) || defined(__Darwin__)
 #include <ifaddrs.h>
 #include <net/if_dl.h>
 
@@ -2561,7 +2568,6 @@ void ast_set_default_eid(struct ast_eid *eid)
 {
 	int s;
 	int x;
-	int res = 0;
 	struct lifreq *ifr = NULL;
 	struct lifnum ifn;
 	struct lifconf ifc;
@@ -2658,7 +2664,7 @@ void ast_set_default_eid(struct ast_eid *eid)
 	unsigned char full_mac[6]  = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 	s = socket(AF_INET, SOCK_STREAM, 0);
-	if (s <= 0) {
+	if (s < 0) {
 		ast_log(LOG_WARNING, "Unable to open socket for seeding global EID. "
 			"You will have to set it manually.\n");
 		return;
@@ -2791,4 +2797,73 @@ int ast_compare_versions(const char *version1, const char *version2)
 		return res;
 	}
 	return extra[0] - extra[1];
+}
+
+int __ast_fd_set_flags(int fd, int flags, enum ast_fd_flag_operation op,
+	const char *file, int lineno, const char *function)
+{
+	int f;
+
+	f = fcntl(fd, F_GETFL);
+	if (f == -1) {
+		ast_log(__LOG_ERROR, file, lineno, function,
+			"Failed to get fcntl() flags for file descriptor: %s\n", strerror(errno));
+		return -1;
+	}
+
+	switch (op) {
+	case AST_FD_FLAG_SET:
+		f |= flags;
+		break;
+	case AST_FD_FLAG_CLEAR:
+		f &= ~flags;
+		break;
+	default:
+		ast_assert(0);
+		break;
+	}
+
+	f = fcntl(fd, F_SETFL, f);
+	if (f == -1) {
+		ast_log(__LOG_ERROR, file, lineno, function,
+			"Failed to set fcntl() flags for file descriptor: %s\n", strerror(errno));
+		return -1;
+	}
+
+	return 0;
+}
+
+/*!
+ * \brief A thread local indicating whether the current thread is a user interface.
+ */
+AST_THREADSTORAGE(thread_user_interface_tl);
+
+int ast_thread_user_interface_set(int is_user_interface)
+{
+	int *thread_user_interface;
+
+	thread_user_interface = ast_threadstorage_get(
+		&thread_user_interface_tl, sizeof(*thread_user_interface));
+	if (thread_user_interface == NULL) {
+		ast_log(LOG_ERROR, "Error setting user interface status for current thread\n");
+		return -1;
+	}
+
+	*thread_user_interface = !!is_user_interface;
+	return 0;
+}
+
+int ast_thread_is_user_interface(void)
+{
+	int *thread_user_interface;
+
+	thread_user_interface = ast_threadstorage_get(
+		&thread_user_interface_tl, sizeof(*thread_user_interface));
+	if (thread_user_interface == NULL) {
+		ast_log(LOG_ERROR, "Error checking thread's user interface status\n");
+		/* On error, assume that we are not a user interface thread */
+		return 0;
+	}
+
+	return *thread_user_interface;
 }

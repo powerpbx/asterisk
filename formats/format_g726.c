@@ -19,7 +19,7 @@
 /*!\file
  *
  * \brief Headerless G.726 (16/24/32/40kbps) data format for Asterisk.
- * 
+ *
  * File name extensions:
  * \arg 40 kbps: g726-40
  * \arg 32 kbps: g726-32
@@ -31,7 +31,7 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
+
 #include "asterisk.h"
 
 ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
@@ -51,7 +51,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 
 #define	BUF_SIZE	(5*FRAME_TIME)	/* max frame size in bytes ? */
 /* Frame sizes in bytes */
-static int frame_size[4] = { 
+static int frame_size[4] = {
 		FRAME_TIME * 5,
 		FRAME_TIME * 4,
 		FRAME_TIME * 3,
@@ -119,22 +119,17 @@ static int g726_16_rewrite(struct ast_filestream *s, const char *comment)
 
 static struct ast_frame *g726_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
 	struct g726_desc *fs = (struct g726_desc *)s->_private;
 
 	/* Send a frame from the file to the appropriate channel */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, frame_size[fs->rate]);
 	s->fr.samples = 8 * FRAME_TIME;
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != s->fr.datalen) {
-		if (feof(s->f)) {
-			if (res) {
-				ast_debug(3, "Incomplete frame data at end of %s file "
-						  "(expected %d bytes, read %d)\n",
-						  ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res);
-			}
-		} else {
-			ast_log(LOG_ERROR, "Error while reading %s file: %s\n",
-					ast_format_get_name(s->fr.subclass.format), strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
 		}
 		return NULL;
 	}
@@ -148,12 +143,12 @@ static int g726_write(struct ast_filestream *s, struct ast_frame *f)
 	struct g726_desc *fs = (struct g726_desc *)s->_private;
 
 	if (f->datalen % frame_size[fs->rate]) {
-		ast_log(LOG_WARNING, "Invalid data length %d, should be multiple of %d\n", 
+		ast_log(LOG_WARNING, "Invalid data length %d, should be multiple of %d\n",
 						f->datalen, frame_size[fs->rate]);
 		return -1;
 	}
 	if ((res = fwrite(f->data.ptr, 1, f->datalen, s->f)) != f->datalen) {
-		ast_log(LOG_WARNING, "Bad write (%d/%d): %s\n", 
+		ast_log(LOG_WARNING, "Bad write (%d/%d): %s\n",
 				res, frame_size[fs->rate], strerror(errno));
 			return -1;
 	}

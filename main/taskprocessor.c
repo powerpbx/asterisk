@@ -114,7 +114,13 @@ struct ast_taskprocessor_listener {
 	void *user_data;
 };
 
-#define TPS_MAX_BUCKETS 7
+#ifdef LOW_MEMORY
+#define TPS_MAX_BUCKETS 61
+#else
+/*! \brief Number of buckets in the tps_singletons container. */
+#define TPS_MAX_BUCKETS 1567
+#endif
+
 /*! \brief tps_singletons is the astobj2 container for taskprocessor singletons */
 static struct ao2_container *tps_singletons;
 
@@ -337,26 +343,27 @@ static void *tps_task_free(struct tps_task *task)
 static char *tps_taskprocessor_tab_complete(struct ast_cli_args *a)
 {
 	int tklen;
-	int wordnum = 0;
 	struct ast_taskprocessor *p;
-	char *name = NULL;
 	struct ao2_iterator i;
 
-	if (a->pos != 3)
+	if (a->pos != 3) {
 		return NULL;
+	}
 
 	tklen = strlen(a->word);
 	i = ao2_iterator_init(tps_singletons, 0);
 	while ((p = ao2_iterator_next(&i))) {
-		if (!strncasecmp(a->word, p->name, tklen) && ++wordnum > a->n) {
-			name = ast_strdup(p->name);
-			ast_taskprocessor_unreference(p);
-			break;
+		if (!strncasecmp(a->word, p->name, tklen)) {
+			if (ast_cli_completion_add(ast_strdup(p->name))) {
+				ast_taskprocessor_unreference(p);
+				break;
+			}
 		}
 		ast_taskprocessor_unreference(p);
 	}
 	ao2_iterator_destroy(&i);
-	return name;
+
+	return NULL;
 }
 
 /* ping task handling function */
