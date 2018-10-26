@@ -37,4 +37,8 @@ doxygen.log
 out/
 *.orig
 tests/CI/output
+.idea
+CMake*
+cmake*
+
 
