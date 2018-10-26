@@ -1,8 +1,8 @@
 diff --git a/channels/chan_pjsip.c b/channels/chan_pjsip.c
-index b9de893..a0ff107 100644
+index 4dcd7439a9..09e70fe0c0 100644
 --- a/channels/chan_pjsip.c
 +++ b/channels/chan_pjsip.c
-@@ -183,6 +183,28 @@ static int chan_pjsip_get_cidhash(struct ast_channel *chan, pjsip_msg *msg)
+@@ -193,6 +193,28 @@ static int chan_pjsip_get_cidhash(struct ast_channel *chan, pjsip_msg *msg)
  	return 0;
  }
  
@@ -31,12 +31,12 @@ index b9de893..a0ff107 100644
  /*! \brief Function called by RTP engine to get local audio RTP peer */
  static enum ast_rtp_glue_result chan_pjsip_get_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance **instance)
  {
-@@ -2213,6 +2235,8 @@ static int chan_pjsip_incoming_request(struct ast_sip_session *session, struct p
+@@ -2644,6 +2666,8 @@ static int chan_pjsip_incoming_request(struct ast_sip_session *session, struct p
  
  	// Store channel hash (calculated from MD5 of the Call-Id header)
  	chan_pjsip_get_cidhash(session->channel, rdata->msg_info.msg);
-+    // Store channel logtag (from X-Info-Logtag header)
-+    chan_pjsip_get_logtag(session->channel, rdata->msg_info.msg);
++	// Store channel logtag (from X-Info-Logtag header)
++	chan_pjsip_get_logtag(session->channel, rdata->msg_info.msg);
  	return 0;
  }
  
