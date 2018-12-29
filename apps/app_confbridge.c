@@ -1301,6 +1301,25 @@ int conf_add_post_join_action(struct confbridge_user *user, int (*func)(struct c
 	return 0;
 }
 
+void conf_handle_pin_request(struct confbridge_conference *conference)
+{
+    char device_name[MAX_CONF_NAME + 12];
+    sprintf(device_name, "confbridge:%s", conference->name);
+
+    if (ast_device_state(device_name) != AST_DEVICE_INUSE) {
+        ast_devstate_changed(AST_DEVICE_RINGING, AST_DEVSTATE_CACHABLE, "confbridge:%s", conference->name);
+    }
+}
+
+void conf_handle_pin_failed(struct confbridge_conference *conference)
+{
+    char device_name[MAX_CONF_NAME + 12];
+    sprintf(device_name, "confbridge:%s", conference->name);
+
+    if (ast_device_state(device_name) == AST_DEVICE_RINGING && conference->enteringusers == 1) {
+        ast_devstate_changed(AST_DEVICE_NOT_INUSE, AST_DEVSTATE_CACHABLE, "confbridge:%s", conference->name);
+    }
+}
 
 void conf_handle_first_join(struct confbridge_conference *conference)
 {
@@ -1400,6 +1419,48 @@ static int push_announcer(void *data)
 	ast_autoservice_start(conference->playback_chan);
 	ao2_cleanup(conference);
 	return 0;
+}
+
+static int conf_get_pin(struct ast_channel *chan, struct confbridge_user *user)
+{
+	char pin_guess[MAX_PIN+1] = { 0, };
+	const char *pin = user->u_profile.pin;
+	char *tmp = pin_guess;
+	int i, res;
+	unsigned int len = MAX_PIN;
+
+	/*
+	 * NOTE: We have not joined a conference yet so we have to use
+	 * the bridge profile requested by the user.
+	 */
+
+	/* give them three tries to get the pin right */
+	for (i = 0; i < 3; i++) {
+		if (ast_app_getdata(chan,
+			conf_get_sound(CONF_SOUND_GET_PIN, user->b_profile.sounds),
+			tmp, len, 0) >= 0) {
+			if (!strcasecmp(pin, pin_guess)) {
+				return 0;
+			}
+		}
+		ast_streamfile(chan,
+			conf_get_sound(CONF_SOUND_INVALID_PIN, user->b_profile.sounds),
+			ast_channel_language(chan));
+		res = ast_waitstream(chan, AST_DIGIT_ANY);
+		if (res > 0) {
+			/* Account for digit already read during ivalid pin playback
+			 * resetting pin buf. */
+			pin_guess[0] = res;
+			pin_guess[1] = '\0';
+			tmp = pin_guess + 1;
+			len = MAX_PIN - 1;
+		} else {
+			/* reset pin buf as empty buffer. */
+			tmp = pin_guess;
+			len = MAX_PIN;
+		}
+	}
+	return -1;
 }
 
 /*!
@@ -1544,6 +1605,22 @@ static struct confbridge_conference *join_conference_bridge(const char *conferen
 	 * need to worry about MOH.
 	 */
 	user->suspended_moh = 1;
+
+    /* ask for a PIN immediately after finding user profile.  This has to be
+     * prompted for requardless of quiet setting. */
+    if (!ast_strlen_zero(user->u_profile.pin)) {
+        conf_add_user_entering(conference, user);
+        conf_handle_pin_request(conference);
+	    ao2_unlock(conference);
+        if (conf_get_pin(user->chan, user)) {
+            pbx_builtin_setvar_helper(user->chan, "CONFBRIDGE_RESULT", "FAILED");
+            conf_handle_pin_failed(conference);
+            conf_remove_user_entering(conference, user);
+            return NULL;
+        }
+	    ao2_lock(conference);
+        conf_remove_user_entering(conference, user);
+    }
 
 	if (handle_conf_user_join(user)) {
 		/* Invalid event, nothing was done, so we don't want to process a leave. */
@@ -2050,47 +2127,6 @@ static int conf_handle_talker_cb(struct ast_bridge_channel *bridge_channel, void
 	return 0;
 }
 
-static int conf_get_pin(struct ast_channel *chan, struct confbridge_user *user)
-{
-	char pin_guess[MAX_PIN+1] = { 0, };
-	const char *pin = user->u_profile.pin;
-	char *tmp = pin_guess;
-	int i, res;
-	unsigned int len = MAX_PIN;
-
-	/*
-	 * NOTE: We have not joined a conference yet so we have to use
-	 * the bridge profile requested by the user.
-	 */
-
-	/* give them three tries to get the pin right */
-	for (i = 0; i < 3; i++) {
-		if (ast_app_getdata(chan,
-			conf_get_sound(CONF_SOUND_GET_PIN, user->b_profile.sounds),
-			tmp, len, 0) >= 0) {
-			if (!strcasecmp(pin, pin_guess)) {
-				return 0;
-			}
-		}
-		ast_streamfile(chan,
-			conf_get_sound(CONF_SOUND_INVALID_PIN, user->b_profile.sounds),
-			ast_channel_language(chan));
-		res = ast_waitstream(chan, AST_DIGIT_ANY);
-		if (res > 0) {
-			/* Account for digit already read during ivalid pin playback
-			 * resetting pin buf. */
-			pin_guess[0] = res;
-			pin_guess[1] = '\0';
-			tmp = pin_guess + 1;
-			len = MAX_PIN - 1;
-		} else {
-			/* reset pin buf as empty buffer. */
-			tmp = pin_guess;
-			len = MAX_PIN;
-		}
-	}
-	return -1;
-}
 
 static int user_timeout(struct ast_bridge_channel *bridge_channel, void *ignore)
 {
@@ -2301,21 +2337,16 @@ static int confbridge_exec(struct ast_channel *chan, const char *data)
 
 	quiet = ast_test_flag(&user.u_profile, USER_OPT_QUIET);
 
-	/* ask for a PIN immediately after finding user profile.  This has to be
-	 * prompted for requardless of quiet setting. */
-	if (!ast_strlen_zero(user.u_profile.pin)) {
-		if (conf_get_pin(chan, &user)) {
-			pbx_builtin_setvar_helper(chan, "CONFBRIDGE_RESULT", "FAILED");
-			res = -1; /* invalid PIN */
-			goto confbridge_cleanup;
-		}
-	}
 
 	/* See if we need them to record a intro name */
 	if (!quiet &&
 		(ast_test_flag(&user.u_profile, USER_OPT_ANNOUNCE_JOIN_LEAVE) ||
 		(ast_test_flag(&user.u_profile, USER_OPT_ANNOUNCE_JOIN_LEAVE_REVIEW)))) {
-		conf_rec_name(&user, args.conf_name);
+		if (conf_rec_name(&user, args.conf_name)) {
+			pbx_builtin_setvar_helper(chan, "CONFBRIDGE_RESULT", "FAILED");
+			res = -1; /* Hangup during name recording */
+			goto confbridge_cleanup;
+		}
 	}
 
 	/* menu name */
@@ -3831,6 +3862,16 @@ static int func_confbridge_info(struct ast_channel *chan, const char *cmd, char 
 		AST_LIST_TRAVERSE(&conference->waiting_list, user, list) {
 			count++;
 		}
+	} else if (!strcasecmp(args.type, "members")) {
+		AST_LIST_TRAVERSE(&conference->active_list, user, list) {
+			count++;
+		}
+		AST_LIST_TRAVERSE(&conference->waiting_list, user, list) {
+			count++;
+		}
+		AST_LIST_TRAVERSE(&conference->entering_list, user, list) {
+			count++;
+		}
 	} else if (!strcasecmp(args.type, "admins")) {
 		AST_LIST_TRAVERSE(&conference->active_list, user, list) {
 			if (ast_test_flag(&user->u_profile, USER_OPT_ADMIN)) {
@@ -3856,6 +3897,12 @@ static int func_confbridge_info(struct ast_channel *chan, const char *cmd, char 
 	return 0;
 }
 
+void conf_add_user_entering(struct confbridge_conference *conference, struct confbridge_user *user)
+{
+	AST_LIST_INSERT_TAIL(&conference->entering_list, user, list);
+	conference->enteringusers++;
+}
+
 void conf_add_user_active(struct confbridge_conference *conference, struct confbridge_user *user)
 {
 	AST_LIST_INSERT_TAIL(&conference->active_list, user, list);
@@ -3873,6 +3920,12 @@ void conf_add_user_waiting(struct confbridge_conference *conference, struct conf
 {
 	AST_LIST_INSERT_TAIL(&conference->waiting_list, user, list);
 	conference->waitingusers++;
+}
+
+void conf_remove_user_entering(struct confbridge_conference *conference, struct confbridge_user *user)
+{
+	AST_LIST_REMOVE(&conference->entering_list, user, list);
+	conference->enteringusers--;
 }
 
 void conf_remove_user_active(struct confbridge_conference *conference, struct confbridge_user *user)

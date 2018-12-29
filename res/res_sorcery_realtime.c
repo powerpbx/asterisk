@@ -38,7 +38,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 #include "asterisk/sorcery.h"
 
 /*! \brief They key field used to store the unique identifier for the object */
-#define UUID_FIELD "id"
+#define UUID_FIELD "sorcery_id"
 
 enum unqualified_fetch {
 	UNQUALIFIED_FETCH_NO,

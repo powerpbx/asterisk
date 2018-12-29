@@ -302,6 +302,7 @@ struct ast_rtp {
 	void *data;
 	struct ast_rtcp *rtcp;
 	struct ast_rtp *bridged;        /*!< Who we are Packet bridged to */
+	unsigned int asymmetric_codec;  /*!< Indicate if asymmetric send/receive codecs are allowed */
 
 	enum strict_rtp_state strict_rtp_state; /*!< Current state that strict RTP protection is in */
 	struct ast_sockaddr strict_rtp_address;  /*!< Remote address information for strict RTP purposes */
@@ -3262,7 +3263,7 @@ static int ast_rtp_dtmf_begin(struct ast_rtp_instance *instance, char digit)
 	for (i = 0; i < 2; i++) {
 		int ice;
 
-		rtpheader[3] = htonl((digit << 24) | (0xa << 16) | (rtp->send_duration));
+		rtpheader[3] = htonl((digit << 24) | (0x0 << 16) | (rtp->send_duration));
 		res = rtp_sendto(instance, (void *) rtpheader, hdrlen + 4, 0, &remote_address, &ice);
 		if (res < 0) {
 			ast_log(LOG_ERROR, "RTP Transmission error to %s: %s\n",
@@ -3309,7 +3310,7 @@ static int ast_rtp_dtmf_continuation(struct ast_rtp_instance *instance)
 	rtpheader[0] = htonl((2 << 30) | (rtp->send_payload << 16) | (rtp->seqno));
 	rtpheader[1] = htonl(rtp->lastdigitts);
 	rtpheader[2] = htonl(rtp->ssrc);
-	rtpheader[3] = htonl((rtp->send_digit << 24) | (0xa << 16) | (rtp->send_duration));
+	rtpheader[3] = htonl((rtp->send_digit << 24) | (0x0 << 16) | (rtp->send_duration));
 
 	/* Boom, send it on out */
 	res = rtp_sendto(instance, (void *) rtpheader, hdrlen + 4, 0, &remote_address, &ice);
@@ -3377,7 +3378,7 @@ static int ast_rtp_dtmf_end_with_duration(struct ast_rtp_instance *instance, cha
 	/* Construct the packet we are going to send */
 	rtpheader[1] = htonl(rtp->lastdigitts);
 	rtpheader[2] = htonl(rtp->ssrc);
-	rtpheader[3] = htonl((digit << 24) | (0xa << 16) | (rtp->send_duration));
+	rtpheader[3] = htonl((digit << 24) | (0x0 << 16) | (rtp->send_duration));
 	rtpheader[3] |= htonl((1 << 23));
 
 	/* Send it 3 times, that's the magical number */
@@ -4780,7 +4781,7 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
 	struct ast_rtp_instance *instance1, unsigned int *rtpheader, int len, int hdrlen)
 {
 	struct ast_rtp *rtp = ast_rtp_instance_get_data(instance);
-	struct ast_rtp *bridged = ast_rtp_instance_get_data(instance1);
+	struct ast_rtp *bridged;
 	int res = 0, payload = 0, bridged_payload = 0, mark;
 	RAII_VAR(struct ast_rtp_payload_type *, payload_type, NULL, ao2_cleanup);
 	int reconstruct = ntohl(rtpheader[0]);
@@ -4790,7 +4791,7 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
 
 	/* Get fields from packet */
 	payload = (reconstruct & 0x7f0000) >> 16;
-	mark = (((reconstruct & 0x800000) >> 23) != 0);
+	mark = (reconstruct & 0x800000) >> 23;
 
 	/* Check what the payload value should be */
 	payload_type = ast_rtp_codecs_get_payload(ast_rtp_instance_get_codecs(instance), payload);
@@ -4815,12 +4816,6 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
 		return -1;
 	}
 
-	/* If bridged peer is in dtmf, feed all packets to core until it finishes to avoid infinite dtmf */
-	if (bridged->sending_digit) {
-		ast_debug(1, "Feeding packets to core until DTMF finishes\n");
-		return -1;
-	}
-
 	/*
 	 * Even if we are no longer in dtmf, we could still be receiving
 	 * re-transmissions of the last dtmf end still.  Feed those to the
@@ -4831,17 +4826,9 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
 		return -1;
 	}
 
-	/* If the marker bit has been explicitly set turn it on */
-	if (ast_test_flag(rtp, FLAG_NEED_MARKER_BIT)) {
-		mark = 1;
-		ast_clear_flag(rtp, FLAG_NEED_MARKER_BIT);
+	if (payload_type->asterisk_format) {
+		ao2_replace(rtp->lastrxformat, payload_type->format);
 	}
-
-	/* Reconstruct part of the packet */
-	reconstruct &= 0xFF80FFFF;
-	reconstruct |= (bridged_payload << 16);
-	reconstruct |= (mark << 23);
-	rtpheader[0] = htonl(reconstruct);
 
 	/*
 	 * We have now determined that we need to send the RTP packet
@@ -4858,6 +4845,40 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
 	ao2_unlock(instance);
 	ao2_lock(instance1);
 
+	/*
+	 * Get the peer rtp pointer now to emphasize that using it
+	 * must happen while instance1 is locked.
+	 */
+	bridged = ast_rtp_instance_get_data(instance1);
+
+
+	/* If bridged peer is in dtmf, feed all packets to core until it finishes to avoid infinite dtmf */
+	if (bridged->sending_digit) {
+		ast_debug(1, "Feeding packet to core until DTMF finishes\n");
+		ao2_unlock(instance1);
+		ao2_lock(instance);
+		return -1;
+	}
+
+	if (payload_type->asterisk_format) {
+		/*
+		 * If bridged peer has already received rtp, perform the asymmetric codec check
+		 * if that feature has been activated
+		 */
+		if (!bridged->asymmetric_codec
+			&& bridged->lastrxformat != ast_format_none
+			&& ast_format_cmp(payload_type->format, bridged->lastrxformat) == AST_FORMAT_CMP_NOT_EQUAL) {
+			ast_debug(1, "Asymmetric RTP codecs detected (TX: %s, RX: %s) sending frame to core\n",
+				ast_format_get_name(payload_type->format),
+				ast_format_get_name(bridged->lastrxformat));
+			ao2_unlock(instance1);
+			ao2_lock(instance);
+			return -1;
+		}
+
+		ao2_replace(bridged->lasttxformat, payload_type->format);
+	}
+
 	ast_rtp_instance_get_remote_address(instance1, &remote_address);
 
 	if (ast_sockaddr_isnull(&remote_address)) {
@@ -4866,6 +4887,18 @@ static int bridge_p2p_rtp_write(struct ast_rtp_instance *instance,
 		ao2_lock(instance);
 		return 0;
 	}
+
+	/* If the marker bit has been explicitly set turn it on */
+	if (ast_test_flag(bridged, FLAG_NEED_MARKER_BIT)) {
+		mark = 1;
+		ast_clear_flag(bridged, FLAG_NEED_MARKER_BIT);
+	}
+
+	/* Reconstruct part of the packet */
+	reconstruct &= 0xFF80FFFF;
+	reconstruct |= (bridged_payload << 16);
+	reconstruct |= (mark << 23);
+	rtpheader[0] = htonl(reconstruct);
 
 	/* Send the packet back out */
 	res = rtp_sendto(instance1, (void *)rtpheader, len, 0, &remote_address, &ice);
@@ -5483,6 +5516,8 @@ static void ast_rtp_prop_set(struct ast_rtp_instance *instance, enum ast_rtp_pro
 				rtp->rtcp = NULL;
 			}
 		}
+	} else if (property == AST_RTP_PROPERTY_ASYMMETRIC_CODEC) {
+		rtp->asymmetric_codec = value;
 	}
 }
 

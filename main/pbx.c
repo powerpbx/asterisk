@@ -2874,12 +2874,23 @@ static int pbx_extension_helper(struct ast_channel *c, struct ast_context *con,
 			}
 			ast_debug(1, "Launching '%s'\n", app_name(app));
 			if (VERBOSITY_ATLEAST(3)) {
-				ast_verb(3, "Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
-					exten, context, priority,
-					COLORIZE(COLOR_BRCYAN, 0, app_name(app)),
-					COLORIZE(COLOR_BRMAGENTA, 0, ast_channel_name(c)),
-					COLORIZE(COLOR_BRMAGENTA, 0, passdata),
-					"in new stack");
+				const char *hashid = pbx_builtin_getvar_helper(c, "CID_HASH");
+				const char *logtag = pbx_builtin_getvar_helper(c, "LOGTAG");
+				if (strcasecmp(app_name(app), "verbose") == 0 || strcasecmp(app_name(app), "log") == 0 || strcasecmp(app_name(app), "noop") == 0) {
+					ast_verb(4, "[%s][%s] Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
+				        	logtag, hashid, exten, context, priority,
+				        	COLORIZE(COLOR_BRBLUE, 0, app_name(app)),
+				        	COLORIZE(COLOR_BRBLUE, 0, ast_channel_name(c)),
+				        	COLORIZE(COLOR_BRBLUE, 0, passdata),
+				        	"in new stack");
+				} else {
+					ast_verb(4, "[%s][%s] Executing [%s@%s:%d] " COLORIZE_FMT "(\"" COLORIZE_FMT "\", \"" COLORIZE_FMT "\") %s\n",
+						logtag, hashid, exten, context, priority,
+						COLORIZE(COLOR_BRCYAN, 0, app_name(app)),
+						COLORIZE(COLOR_BRMAGENTA, 0, ast_channel_name(c)),
+						COLORIZE(COLOR_BRMAGENTA, 0, passdata),
+						"in new stack");
+				}
 			}
 			return pbx_exec(c, app, passdata);	/* 0 on success, -1 on failure */
 		}

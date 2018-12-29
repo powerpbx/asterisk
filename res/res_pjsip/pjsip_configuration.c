@@ -602,6 +602,8 @@ static int ident_handler(const struct aco_option *opt, struct ast_variable *var,
 
 		if (!strcasecmp(val, "username")) {
 			method = AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME;
+        } else if (!strcasecmp(val, "contact")) {
+            method = AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT;
 		} else	if (!strcasecmp(val, "auth_username")) {
 			method = AST_SIP_ENDPOINT_IDENTIFY_BY_AUTH_USERNAME;
 		} else {
@@ -645,6 +647,9 @@ static int ident_to_str(const void *obj, const intptr_t *args, char **buf)
 		case AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME :
 			method = "username";
 			break;
+        case AST_SIP_ENDPOINT_IDENTIFY_BY_CONTACT :
+            method = "contact";
+            break;
 		case AST_SIP_ENDPOINT_IDENTIFY_BY_AUTH_USERNAME :
 			method = "auth_username";
 			break;

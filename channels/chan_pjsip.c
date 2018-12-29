@@ -157,6 +157,54 @@ static struct ast_sip_session_supplement chan_pjsip_ack_supplement = {
 	.incoming_request = chan_pjsip_incoming_ack,
 };
 
+static int chan_pjsip_get_cidhash(struct ast_channel *chan, pjsip_msg *msg)
+{
+	if (!chan || !msg)
+		return -1;
+
+	// Get Call-Id Header data
+	pjsip_cid_hdr *hdr = pjsip_msg_find_hdr(msg, PJSIP_H_CALL_ID, NULL);
+	if (!hdr || hdr->id.slen >= 1024)
+		return -1;
+
+	// Calculate value md5
+	char callid[1024], hash[33];
+	memset(callid, 0, sizeof(callid));
+	memset(hash, 0, sizeof(hash));
+	strncpy(callid, hdr->id.ptr, hdr->id.slen);
+	ast_md5_hash(hash, callid);
+
+	// Only get first eight characters
+	hash[8] = '\0';
+
+	// Set Channel variable CID_HASH (will be used in pbx messages)
+	pbx_builtin_setvar_helper(chan, "__CID_HASH", hash);
+
+	return 0;
+}
+
+static int chan_pjsip_get_logtag(struct ast_channel *chan, pjsip_msg *msg)
+{
+    pj_str_t hdrname = { .ptr = "X-Info-Logtag", .slen = 13 };
+
+    if (!chan || !msg)
+        return -1;
+
+    // Get X-Info-Log Header data
+    pjsip_cid_hdr *hdr = pjsip_msg_find_hdr_by_name(msg, &hdrname, NULL);
+    if (!hdr || hdr->id.slen >= 256)
+        return -1;
+
+    // Store logtag
+    char logtag[256];
+    memset(logtag, 0, sizeof(logtag));
+    strncpy(logtag, hdr->id.ptr, hdr->id.slen);
+
+    // Set Channel variable LOGTAG (will be used in pbx messages)
+    pbx_builtin_setvar_helper(chan, "__LOGTAG", logtag);
+    return 0;
+}
+
 /*! \brief Function called by RTP engine to get local audio RTP peer */
 static enum ast_rtp_glue_result chan_pjsip_get_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance **instance)
 {
@@ -727,14 +775,11 @@ static struct ast_frame *chan_pjsip_read(struct ast_channel *ast)
 
 	session = channel->session;
 
-	if (ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
-		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when it has not been negotiated\n",
-			ast_format_get_name(f->subclass.format), ast_channel_name(ast));
-
-		ast_frfree(f);
-		return &ast_null_frame;
-	}
-
+	/*
+	 * Asymmetric RTP only has one native format set at a time.
+	 * Therefore we need to update the native format to the current
+	 * raw read format BEFORE the native format check
+	 */
 	if (!session->endpoint->asymmetric_rtp_codec &&
 		ast_format_cmp(ast_channel_rawwriteformat(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
 		struct ast_format_cap *caps;
@@ -759,6 +804,14 @@ static struct ast_frame *chan_pjsip_read(struct ast_channel *ast)
 		if (ast_channel_is_bridged(ast)) {
 			ast_channel_set_unbridged_nolock(ast, 1);
 		}
+	}
+
+	if (ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), f->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
+		ast_debug(1, "Oooh, got a frame with format of %s on channel '%s' when it has not been negotiated\n",
+			ast_format_get_name(f->subclass.format), ast_channel_name(ast));
+
+		ast_frfree(f);
+		return &ast_null_frame;
 	}
 
 	if (session->dsp) {
@@ -1000,7 +1053,7 @@ static int chan_pjsip_devicestate(const char *data)
 	}
 
 	if (endpoint_snapshot->state == AST_ENDPOINT_OFFLINE) {
-		state = AST_DEVICE_UNAVAILABLE;
+		state = AST_DEVICE_NOT_INUSE;
 	} else if (endpoint_snapshot->state == AST_ENDPOINT_ONLINE) {
 		state = AST_DEVICE_NOT_INUSE;
 	}
@@ -1287,9 +1340,9 @@ static int update_connected_line_information(void *data)
 		int response_code = 0;
 
 		if (ast_channel_state(session->channel) == AST_STATE_RING) {
-			response_code = !session->endpoint->inband_progress ? 180 : 183;
+			return 0;
 		} else if (ast_channel_state(session->channel) == AST_STATE_RINGING) {
-			response_code = 183;
+			response_code = !session->endpoint->inband_progress ? 180 : 183;
 		}
 
 		if (response_code) {
@@ -1925,6 +1978,8 @@ static int call(void *data)
 		ast_set_hangupsource(session->channel, ast_channel_name(session->channel), 0);
 		ast_queue_hangup(session->channel);
 	} else {
+		// Store channel hash (calculated from MD5 of the Call-Id header)
+		chan_pjsip_get_cidhash(session->channel, tdata->msg);
 		set_channel_on_rtp_instance(pvt, ast_channel_uniqueid(session->channel));
 		update_initial_connected_line(session);
 		ast_sip_session_send_request(session, tdata);
@@ -2466,6 +2521,11 @@ static int chan_pjsip_incoming_request(struct ast_sip_session *session, struct p
 	}
 	/* channel gets created on incoming request, but we wait to call start
            so other supplements have a chance to run */
+
+	// Store channel hash (calculated from MD5 of the Call-Id header)
+	chan_pjsip_get_cidhash(session->channel, rdata->msg_info.msg);
+    // Store channel logtag (from X-Info-Logtag header)
+    chan_pjsip_get_logtag(session->channel, rdata->msg_info.msg);
 	return 0;
 }
 

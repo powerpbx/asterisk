@@ -922,6 +922,34 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 			<ref type="application">AGI</ref>
 		</see-also>
 	</agi>
+    <agi name="error" language="en_US">
+        <synopsis>
+            Logs a message to the asterisk error log.
+        </synopsis>
+        <syntax>
+            <parameter name="message" required="true" />
+            <parameter name="level" required="true" />
+        </syntax>
+        <description>
+            <para>Sends <replaceable>message</replaceable> to the console via verbose
+            message system. <replaceable>level</replaceable> is the verbose level (1-4).
+            Always returns <literal>1</literal></para>
+        </description>
+    </agi>
+	<agi name="notice" language="en_US">
+		<synopsis>
+			Logs a message to the asterisk notice log.
+		</synopsis>
+		<syntax>
+			<parameter name="message" required="true" />
+			<parameter name="level" required="true" />
+		</syntax>
+		<description>
+			<para>Sends <replaceable>message</replaceable> to the console via verbose
+			message system. <replaceable>level</replaceable> is the verbose level (1-4).
+			Always returns <literal>1</literal></para>
+		</description>
+	</agi>
 	<agi name="wait for digit" language="en_US">
 		<synopsis>
 			Waits for a digit to be pressed.
@@ -3210,12 +3238,16 @@ static int handle_channelstatus(struct ast_channel *chan, AGI *agi, int argc, co
 
 static int handle_setvariable(struct ast_channel *chan, AGI *agi, int argc, const char * const argv[])
 {
-	if (argc != 4) {
+	if (argc != 5) {
 		return RESULT_SHOWUSAGE;
 	}
 
-	if (argv[3])
+	if (argv[3]) {
 		pbx_builtin_setvar_helper(chan, argv[2], argv[3]);
+		const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
+		const char *logtag = pbx_builtin_getvar_helper(chan, "LOGTAG");
+		ast_verb(4, "[%s][%s] [%-25s] \e[0;36mAGI SetVar\e[0;37m(\"\e[0;35m%s\e[0;37m\", \"\e[0;35m%s = %s\e[0;37m\")\e[0m\n", logtag, hashid, argv[4], ast_channel_name(chan), argv[2], argv[3]);
+	}
 
 	ast_agi_send(agi->fd, chan, "200 result=1\n");
 	return RESULT_SUCCESS;
@@ -3288,7 +3320,47 @@ static int handle_verbose(struct ast_channel *chan, AGI *agi, int argc, const ch
 	if (argv[2])
 		sscanf(argv[2], "%30d", &level);
 
-	ast_verb(level, "%s: %s\n", ast_channel_data(chan), argv[1]);
+	const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
+    const char *logtag = pbx_builtin_getvar_helper(chan, "LOGTAG");
+	ast_verb(level, "[%s][%s] [%-25s] \e[0;34mAGI Verbos\e[0;37m(\"\e[0;34m%s\e[0;37m\", \"\e[0;34m%s\e[0;37m\")\e[0m\n", logtag, hashid, argv[3], ast_channel_name(chan), argv[1]);
+
+	ast_agi_send(agi->fd, chan, "200 result=1\n");
+
+	return RESULT_SUCCESS;
+}
+
+static int handle_notice(struct ast_channel *chan, AGI *agi, int argc, const char * const argv[])
+{
+	int level = 0;
+
+	if (argc < 2)
+		return RESULT_SHOWUSAGE;
+
+	if (argv[2])
+		sscanf(argv[2], "%30d", &level);
+
+	const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
+    const char *logtag = pbx_builtin_getvar_helper(chan, "LOGTAG");
+	ast_verb(level, "[%s][%s] [%-25s] \e[0;93mAGI Notice\e[0;37m(\"\e[0;93m%s\e[0;37m\", \"\e[0;93m%s\e[0;37m\")\e[0m\n", logtag, hashid, argv[3], ast_channel_name(chan), argv[1]);
+
+	ast_agi_send(agi->fd, chan, "200 result=1\n");
+
+	return RESULT_SUCCESS;
+}
+
+static int handle_error(struct ast_channel *chan, AGI *agi, int argc, const char * const argv[])
+{
+	int level = 0;
+
+	if (argc < 2)
+		return RESULT_SHOWUSAGE;
+
+	if (argv[2])
+		sscanf(argv[2], "%30d", &level);
+
+	const char *hashid = pbx_builtin_getvar_helper(chan, "CID_HASH");
+    const char *logtag = pbx_builtin_getvar_helper(chan, "LOGTAG");
+	ast_verb(level, "[%s][%s] [%-25s] \e[0;31mAGI Error \e[0;37m(\"\e[0;31m%s\e[0;37m\", \"\e[0;31m%s\e[0;37m\")\e[0m\n", logtag, hashid, argv[3], ast_channel_name(chan), argv[1]);
 
 	ast_agi_send(agi->fd, chan, "200 result=1\n");
 
@@ -3749,6 +3821,8 @@ static struct agi_command commands[] = {
 	{ { "control", "stream", "file", NULL }, handle_controlstreamfile, NULL, NULL, 0 },
 	{ { "tdd", "mode", NULL }, handle_tddmode, NULL, NULL, 0 },
 	{ { "verbose", NULL }, handle_verbose, NULL, NULL, 1 },
+	{ { "notice", NULL }, handle_notice, NULL, NULL, 1 },
+	{ { "error", NULL }, handle_error, NULL, NULL, 1 },
 	{ { "wait", "for", "digit", NULL }, handle_waitfordigit, NULL, NULL, 0 },
 	{ { "speech", "create", NULL }, handle_speechcreate, NULL, NULL, 0 },
 	{ { "speech", "set", NULL }, handle_speechset, NULL, NULL, 0 },

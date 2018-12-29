@@ -1332,7 +1332,7 @@ static const struct autopause {
 	{ QUEUE_AUTOPAUSE_ALL,"all" },
 };
 
-#define DEFAULT_RETRY		5
+#define DEFAULT_RETRY		0
 #define DEFAULT_TIMEOUT		15
 #define RECHECK			1		/*!< Recheck every second to see we we're at the top yet */
 #define MAX_PERIODIC_ANNOUNCEMENTS 10           /*!< The maximum periodic announcements we can have */

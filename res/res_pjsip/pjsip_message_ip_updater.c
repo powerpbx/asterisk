@@ -286,6 +286,13 @@ static pj_status_t multihomed_on_tx_message(pjsip_tx_data *tdata)
 		}
 	}
 
+	/**
+	 * Do not update SDP address with transport binding address.
+	 * On multihomed enviroments (p.e. ivozprovider standalone) this breaks
+	 * media liberation by overwritting media address with transport address.
+	 */
+	return PJ_SUCCESS;
+
 	/* Update the SDP if it is present */
 	if (tdata->msg->body && ast_sip_is_content_type(&tdata->msg->body->content_type, "application", "sdp") &&
 		multihomed_rewrite_sdp(tdata->msg->body->data)) {

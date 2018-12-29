@@ -219,6 +219,7 @@ struct confbridge_conference {
 	unsigned int activeusers;                                         /*!< Number of active users present */
 	unsigned int markedusers;                                         /*!< Number of marked users present */
 	unsigned int waitingusers;                                        /*!< Number of waiting users present */
+	unsigned int enteringusers;                                       /*!< Number of entering pin users present */
 	unsigned int locked:1;                                            /*!< Is this conference bridge locked? */
 	unsigned int muted:1;                                             /*!< Is this conference bridge muted? */
 	struct ast_channel *playback_chan;                                /*!< Channel used for playback into the conference bridge */
@@ -227,6 +228,7 @@ struct confbridge_conference {
 	struct ast_str *orig_rec_file;                                    /*!< Previous b_profile.rec_file. */
 	AST_LIST_HEAD_NOLOCK(, confbridge_user) active_list;              /*!< List of users participating in the conference bridge */
 	AST_LIST_HEAD_NOLOCK(, confbridge_user) waiting_list;             /*!< List of users waiting to join the conference bridge */
+	AST_LIST_HEAD_NOLOCK(, confbridge_user) entering_list;            /*!< List of users entering pin to join the conference bridge */
 	struct ast_taskprocessor *playback_queue;                         /*!< Queue for playing back bridge announcements and managing the announcer channel */
 };
 
@@ -454,6 +456,16 @@ void conf_moh_start(struct confbridge_user *user);
  */
 void conf_mute_only_active(struct confbridge_conference *conference);
 
+/*! \brief Callback to execute any time we request a pin to a entering pin user
+ * \param conference The conference bridge
+ */
+void conf_handle_pin_request(struct confbridge_conference *conference);
+
+/*! \brief Callback to execute any time the user leaves the confence during pin request
+ * \param conference The conference bridge
+ */
+void conf_handle_pin_failed(struct confbridge_conference *conference);
+
 /*! \brief Callback to execute any time we transition from zero to one active users
  * \param conference The conference bridge with a single active user joined
  * \retval 0 success
@@ -481,6 +493,12 @@ int conf_handle_only_unmarked(struct confbridge_user *user);
  */
 void conf_handle_second_active(struct confbridge_conference *conference);
 
+/*! \brief Add a conference bridge user as an entering pin user of the conference
+ * \param conference The conference bridge to add the user to
+ * \param user The conference bridge user to add to the conference
+ */
+void conf_add_user_entering(struct confbridge_conference *conference, struct confbridge_user *user);
+
 /*! \brief Add a conference bridge user as an unmarked active user of the conference
  * \param conference The conference bridge to add the user to
  * \param user The conference bridge user to add to the conference
@@ -498,6 +516,12 @@ void conf_add_user_marked(struct confbridge_conference *conference, struct confb
  * \param user The conference bridge user to add to the conference
  */
 void conf_add_user_waiting(struct confbridge_conference *conference, struct confbridge_user *user);
+
+/*! \brief Remove a conference bridge user from the entering pin conference users in the conference
+ * \param conference The conference bridge to remove the user from
+ * \param user The conference bridge user to remove from the conference
+ */
+void conf_remove_user_entering(struct confbridge_conference *conference, struct confbridge_user *user);
 
 /*! \brief Remove a conference bridge user from the unmarked active conference users in the conference
  * \param conference The conference bridge to remove the user from
