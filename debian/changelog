@@ -4,7 +4,7 @@ ivozprovider-asterisk (1:2.9~13.17.1-ppx1) UNRELEASED; urgency=medium
 
  -- PowerPBX <devops@powerpbx.org>  Mon, 04 Feb 2019 16:22:04 -0800
 
-ivozprovider-asterisk (2.9~13.17.0) UNRELEASED; urgency=medium
+ivozprovider-asterisk (2.9~13.17.0) stable; urgency=medium
 
   * Version bump to 2.9.0
 
